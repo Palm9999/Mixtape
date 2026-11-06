@@ -1,0 +1,7 @@
+{
+  "items": [
+    {"id": "vid1", "contentDetails": {"duration": "PT3M21S"}},
+    {"id": "vid2", "contentDetails": {"duration": "PT1H2M3S"}},
+    {"id": "live", "contentDetails": {"duration": "P0D"}}
+  ]
+}

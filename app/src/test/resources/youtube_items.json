@@ -1,0 +1,31 @@
+{
+  "kind": "youtube#playlistItemListResponse",
+  "items": [
+    {
+      "snippet": {
+        "title": "Song One",
+        "videoOwnerChannelTitle": "Band Name - Topic",
+        "thumbnails": {"medium": {"url": "https://i.ytimg.com/vi/vid1/mqdefault.jpg"}},
+        "resourceId": {"kind": "youtube#video", "videoId": "vid1"}
+      },
+      "contentDetails": {"videoId": "vid1"}
+    },
+    {
+      "snippet": {
+        "title": "Song Two (Live)",
+        "videoOwnerChannelTitle": "Some Uploader",
+        "thumbnails": {},
+        "resourceId": {"kind": "youtube#video", "videoId": "vid2"}
+      },
+      "contentDetails": {"videoId": "vid2"}
+    },
+    {
+      "snippet": {
+        "title": "Deleted video",
+        "thumbnails": {},
+        "resourceId": {"kind": "youtube#video", "videoId": "gone"}
+      },
+      "contentDetails": {"videoId": "gone"}
+    }
+  ]
+}

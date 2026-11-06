@@ -1,0 +1,25 @@
+{
+  "href": "https://api.spotify.com/v1/me/playlists?offset=0&limit=50",
+  "items": [
+    {
+      "collaborative": false,
+      "id": "37i9dQZF1DXcBWIGoYBM5M",
+      "images": [{"height": 640, "url": "https://i.scdn.co/image/abc", "width": 640}],
+      "name": "Road Trip",
+      "snapshot_id": "AAAAB8C2",
+      "type": "playlist",
+      "items": {"href": "https://api.spotify.com/v1/playlists/37i9dQZF1DXcBWIGoYBM5M/items", "total": 3}
+    },
+    {
+      "id": "1a2b3c",
+      "images": null,
+      "name": "No Art",
+      "snapshot_id": "ZZZ",
+      "type": "playlist"
+    }
+  ],
+  "limit": 50,
+  "next": "https://api.spotify.com/v1/me/playlists?offset=50&limit=50",
+  "offset": 0,
+  "total": 52
+}
