@@ -1,0 +1,39 @@
+{
+  "items": [
+    {
+      "added_at": "2025-01-01T00:00:00Z",
+      "is_local": false,
+      "item": {
+        "type": "track",
+        "id": "4uLU6hMCjMI75M1A2tKUQC",
+        "name": "Never Gonna Give You Up",
+        "duration_ms": 213573,
+        "is_local": false,
+        "external_ids": {"isrc": "GBARL9300135"},
+        "artists": [{"id": "a1", "name": "Rick Astley"}],
+        "album": {"name": "Whenever You Need Somebody", "images": [{"url": "https://i.scdn.co/image/rick"}]}
+      }
+    },
+    {
+      "is_local": false,
+      "track": {
+        "type": "track",
+        "id": "7ouMYWpwJ422jRcDASZB7P",
+        "name": "Duet",
+        "duration_ms": 180000,
+        "artists": [{"name": "Artist A"}, {"name": "Artist B"}],
+        "album": {"name": "Album", "images": []}
+      }
+    },
+    {
+      "is_local": false,
+      "item": {"type": "episode", "id": "ep1", "name": "A Podcast", "duration_ms": 3600000}
+    },
+    {
+      "is_local": true,
+      "item": {"type": "track", "id": null, "name": "local.mp3", "is_local": true, "duration_ms": 1000}
+    },
+    {"is_local": false, "item": null}
+  ],
+  "next": null
+}

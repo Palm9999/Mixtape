@@ -1,0 +1,19 @@
+{
+  "kind": "youtube#playlistListResponse",
+  "etag": "list-etag",
+  "nextPageToken": "CDIQAA",
+  "items": [
+    {
+      "kind": "youtube#playlist",
+      "etag": "PLetag123",
+      "id": "PLx0sYbCqOb8TBPRdmBHs5Iftvv9TPboYG",
+      "snippet": {
+        "title": "Live Cuts",
+        "thumbnails": {
+          "default": {"url": "https://i.ytimg.com/vi/x/default.jpg"},
+          "high": {"url": "https://i.ytimg.com/vi/x/hqdefault.jpg"}
+        }
+      }
+    }
+  ]
+}
