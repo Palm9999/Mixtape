@@ -43,7 +43,7 @@ class SpotifyAuth(context: Context) {
     fun signInIntent(activity: Activity): Intent {
         check(BuildConfig.SPOTIFY_CLIENT_ID.isNotEmpty()) { "Set spotifyClientId in gradle.properties" }
         val request = SpotifyAuthRequest.Builder(BuildConfig.SPOTIFY_CLIENT_ID, AuthorizationResponse.Type.CODE, REDIRECT)
-            .setScopes(arrayOf("playlist-read-private", "playlist-read-collaborative"))
+            .setScopes(arrayOf("playlist-read-private", "playlist-read-collaborative", "app-remote-control"))
             .setPkceInformation(PKCEInformationFactory.create())
             .build()
         pending = request

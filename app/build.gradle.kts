@@ -55,7 +55,13 @@ dependencies {
     implementation("androidx.room:room-runtime:2.8.3")
     ksp("androidx.room:room-compiler:2.8.3")
     implementation("androidx.security:security-crypto:1.1.0")
+    implementation("io.coil-kt.coil3:coil-compose:3.3.0")
+    implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
+    implementation("sh.calvin.reorderable:reorderable:2.5.1")
     implementation("com.spotify.android:auth:3.1.0")
+    // App Remote is not on Maven; the AAR is from github.com/spotify/android-sdk releases. It needs Gson.
+    implementation(files("libs/spotify-app-remote-release-0.8.0.aar"))
+    implementation("com.google.code.gson:gson:2.13.2")
     implementation("com.google.android.gms:play-services-auth:21.4.0")
 
     testImplementation("junit:junit:4.13.2")

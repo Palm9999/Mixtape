@@ -22,25 +22,30 @@ object SpotifyJson {
 
     /** Playlist items. Accepts both `item` (Feb 2026 API) and `track` keys; skips episodes and local files. */
     fun items(json: JSONObject) = Page(
-        json.optJSONArray("items").objects().mapNotNull { row ->
-            val t = row.optJSONObject("item") ?: row.optJSONObject("track") ?: return@mapNotNull null
-            if (t.str("type") != "track" || t.optBoolean("is_local")) return@mapNotNull null
-            val id = t.str("id") ?: return@mapNotNull null
-            val album = t.optJSONObject("album")
-            Track(
-                id = "$SPOTIFY:$id",
-                service = SPOTIFY,
-                remoteId = id,
-                title = t.str("name") ?: "",
-                artist = t.optJSONArray("artists").objects().mapNotNull { it.str("name") }.joinToString(", "),
-                album = album?.str("name"),
-                durationMs = t.optLong("duration_ms"),
-                isrc = t.optJSONObject("external_ids")?.str("isrc"),
-                artUrl = album?.firstImage(),
-            )
-        },
+        json.optJSONArray("items").objects().mapNotNull { row -> (row.optJSONObject("item") ?: row.optJSONObject("track"))?.let(::track) },
         json.str("next"),
     )
+
+    /** `/search?type=track` results. */
+    fun search(json: JSONObject): List<Track> =
+        json.optJSONObject("tracks")?.optJSONArray("items").objects().mapNotNull(::track)
+
+    private fun track(t: JSONObject): Track? {
+        if (t.str("type") != "track" || t.optBoolean("is_local")) return null
+        val id = t.str("id") ?: return null
+        val album = t.optJSONObject("album")
+        return Track(
+            id = "$SPOTIFY:$id",
+            service = SPOTIFY,
+            remoteId = id,
+            title = t.str("name") ?: "",
+            artist = t.optJSONArray("artists").objects().mapNotNull { it.str("name") }.joinToString(", "),
+            album = album?.str("name"),
+            durationMs = t.optLong("duration_ms"),
+            isrc = t.optJSONObject("external_ids")?.str("isrc"),
+            artUrl = album?.firstImage(),
+        )
+    }
 }
 
 object YouTubeJson {
