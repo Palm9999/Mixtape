@@ -6,18 +6,26 @@ Personal-use Android app (one user, sideloaded, never published) that merges Spo
 
 ## Status
 
-All six milestones of the build plan are written: library sync, mixes, matching, Spotify playback, YouTube Music playback, polish. `./gradlew testDebugUnitTest lintDebug assembleDebug` is green (10 JVM tests, 0 lint errors). GitHub Actions runs the same on every push and uploads the debug APK as the `mixtape-debug-apk` artifact.
+All six milestones of the build plan are built and merged to `main` (PR #1). `./gradlew testDebugUnitTest lintDebug assembleDebug` is green (10 JVM tests, 0 lint errors). GitHub Actions runs the same on every push to `main` and on every PR, and uploads the debug APK as the `mixtape-debug-apk` artifact.
 
-**Nothing has been run on a phone.** Sign-in, sync and above all playback are untested against the real apps. The next step is a phone test, in this order:
+**The user installed the APK and reported "the app works" (2026-11-13).** They gave no detail on which flows they exercised, so do not assume every item below was checked. Ask before relying on any one of them:
 
-1. Install the APK. Accounts screen: sign in to Spotify and YouTube, grant notification access and "Display over other apps".
-2. Library: playlists from both services appear; open one.
-3. Play a Spotify playlist: tracks advance on their own, with the screen off too.
-4. Play a YouTube playlist: YouTube Music opens, Mixtape comes back to the front, the next track starts when one ends.
-5. Build a mix from one playlist of each service and play it through a Spotify to YouTube handoff and back.
-6. Review screen: accept or reject a few matches; a linked YouTube track should then play from Spotify.
+- screen-off advance for Spotify and for YouTube Music
+- Spotify to YouTube handoff and back inside a mix
+- match review, and a linked YouTube track playing from Spotify
+- whether Spotify refused the tracks of any playlist (Development Mode limits)
 
-The Spotify client ID is in `gradle.properties`. Debug keystore SHA-1 (given to Spotify; the Google Android OAuth client needs the same one): `77:94:58:84:0D:39:AE:EF:08:3C:29:6E:41:58:17:87:2C:CC:60:A8`. Whether the user finished the Google Cloud setup is not confirmed.
+No work is in progress and nothing is queued. Start a new session by asking the user what they want next. Candidates, none of them requested yet:
+
+- Tune the matching thresholds (0.85 / 0.6 in `Matcher.kt`) on the user's real library.
+- Replace the hand-written mapper fixtures with recorded API responses.
+- Run the matching backlog under WorkManager so it advances while the app is closed.
+- Export a mix to a Spotify playlist (needs the "nothing is written back in v1" ruling lifted, and write scopes).
+- Move to AGP 9.1 / compileSdk 37 to unpin AndroidX.
+
+Workflow: branch from `main`, open a PR, and merge only when the user asks.
+
+The Spotify client ID is in `gradle.properties`. Debug keystore SHA-1 (registered with Spotify and with the Google Android OAuth client): `77:94:58:84:0D:39:AE:EF:08:3C:29:6E:41:58:17:87:2C:CC:60:A8`.
 
 ## Where things live (`app/src/main/java/dev/mixtape/`)
 
@@ -59,6 +67,7 @@ The Spotify client ID is in `gradle.properties`. Debug keystore SHA-1 (given to 
 - The screen-off launch of YouTube Music depends on "Display over other apps". If Android still blocks it, playback stops with an error after 15 s. This is the doc's main open risk; test it early.
 - A Spotify sign-in made before playback existed lacks the `app-remote-control` scope; Spotify asks for it on first playback.
 - Mapper fixtures are hand-written to the documented shapes, not recorded responses.
+- The playback rules above were written from documented behavior. The user reports the app works, but which edge cases (relinked Spotify tracks, autoplay taking over, the 15 s YouTube fallback) were hit on the phone is unknown.
 - Cloud sessions: the Android SDK needs `dl.google.com` (the personal `mixtape` cloud environment allows it); SDK at `/opt/android-sdk`, `local.properties` not committed.
 
 ## Rulings that bind
