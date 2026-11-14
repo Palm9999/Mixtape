@@ -67,7 +67,7 @@ class MappersTest {
             tracks = listOf(sp, yt),
             links = listOf(TrackLink("youtube:b", "spotify:a", 0.9, TrackLink.REVIEWED), TrackLink("youtube:c", null, 0.0, TrackLink.MANUAL)),
             mixes = listOf(
-                Mix(name = "Drive", createdAt = 1, updatedAt = 2) to listOf(MixItem(0, 0, "spotify:a", "spotify:pl"), MixItem(0, 1, "youtube:b", null)),
+                Mix(name = "Drive", createdAt = 1, updatedAt = 2, rules = SmartRule("most").toJson()) to listOf(MixItem(0, 0, "spotify:a", "spotify:pl"), MixItem(0, 1, "youtube:b", null)),
                 Mix(name = "Empty", createdAt = 3, updatedAt = 3) to emptyList(),
             ),
         )
@@ -90,5 +90,12 @@ class MappersTest {
 
     @Test(expected = IllegalArgumentException::class) fun backupRejectsOtherJson() {
         BackupJson.decode(JSONObject("""{"items":[]}"""))
+    }
+
+    @Test fun addedAt() {
+        val sp = JSONObject("""{"items":[{"added_at":"2024-01-02T03:04:05Z","item":{"id":"a","type":"track"}},{"track":{"id":"b"}}]}""")
+        assertEquals(mapOf("spotify:a" to 1704164645000L), SpotifyJson.addedAt(sp))
+        val yt = JSONObject("""{"items":[{"snippet":{"publishedAt":"2024-01-02T03:04:05Z","resourceId":{"videoId":"v"}}}]}""")
+        assertEquals(mapOf("youtube:v" to 1704164645000L), YouTubeJson.addedAt(yt))
     }
 }

@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -111,6 +113,7 @@ private fun Mixtape(app: MixtapeApp) {
     var refreshing by remember { mutableStateOf(false) }
     var adding by remember { mutableStateOf<Adding?>(null) }
     var naming by remember { mutableStateOf(false) }
+    var smart by remember { mutableStateOf(false) }
 
     fun say(message: String) { scope.launch { snackbar.showSnackbar(message) } }
     fun report(e: Throwable) = say(e.message ?: e.toString())
@@ -199,6 +202,8 @@ private fun Mixtape(app: MixtapeApp) {
                             route == "connect" -> "Accounts"
                             route == "review" -> "Review matches"
                             route == "now" -> "Now playing"
+                            route == "stats" -> "Listening stats"
+                            route == "cleanup" -> "Library cleanup"
                             else -> "Mixtape"
                         }
                     )
@@ -206,7 +211,17 @@ private fun Mixtape(app: MixtapeApp) {
                 navigationIcon = {
                     if (stack.size > 1) IconButton(onClick = ::back) { Icon(Glyphs.Back, "Back") }
                 },
-                actions = { if (route == "library") TextButton(onClick = { go("connect") }) { Text("Accounts") } },
+                actions = {
+                    if (route == "library") {
+                        var menu by remember { mutableStateOf(false) }
+                        IconButton({ menu = true }) { Icon(Glyphs.More, "Menu") }
+                        DropdownMenu(menu, { menu = false }) {
+                            listOf("Accounts" to "connect", "Listening stats" to "stats", "Library cleanup" to "cleanup").forEach { (label, to) ->
+                                DropdownMenuItem({ Text(label) }, { menu = false; go(to) })
+                            }
+                        }
+                    }
+                },
             )
         },
         bottomBar = { if (ps.current != null && route != "now") MiniPlayer(ps, player) { go("now") } },
@@ -242,6 +257,8 @@ private fun Mixtape(app: MixtapeApp) {
             )
             route == "review" -> ReviewScreen(modifier, app, ::report)
             route == "now" -> NowPlayingScreen(modifier, ps, player)
+            route == "stats" -> StatsScreen(modifier, dao)
+            route == "cleanup" -> CleanupScreen(modifier, app, links, ::report)
             route.startsWith("playlist/") -> PlaylistScreen(
                 modifier, app, route.removePrefix("playlist/"), links,
                 onAdd = { tracks, source -> adding = Adding(tracks, source) }, report = ::report,
@@ -249,7 +266,7 @@ private fun Mixtape(app: MixtapeApp) {
             route.startsWith("mix/") -> MixScreen(modifier, app, route.removePrefix("mix/").toLong(), links, onDeleted = ::back)
             else -> LibraryScreen(
                 modifier, dao, mixes, refreshing, ::refresh,
-                onOpen = ::go, onNewMix = { adding = null; naming = true },
+                onOpen = ::go, onNewMix = { adding = null; naming = true }, onNewSmart = { smart = true },
                 player = player, links = links, onAdd = { tracks, source -> adding = Adding(tracks, source) },
             )
         }
@@ -268,7 +285,8 @@ private fun Mixtape(app: MixtapeApp) {
                             modifier = Modifier.clickable { naming = true },
                         )
                     }
-                    items(mixes, key = { it.id }) { mix ->
+                    // A smart mix fills itself; tracks cannot be added to it.
+                    items(mixes.filter { it.rules == null }, key = { it.id }) { mix ->
                         ListItem(
                             headlineContent = { Text(mix.name) },
                             modifier = Modifier.clickable { adding = null; scope.launch { addToMix(mix.id, add) } },
@@ -279,6 +297,14 @@ private fun Mixtape(app: MixtapeApp) {
             confirmButton = {},
             dismissButton = { TextButton(onClick = { adding = null }) { Text("Cancel") } },
         )
+    }
+
+    if (smart) SmartDialog("New smart mix", "", SmartRule(), { smart = false }) { name, rule ->
+        smart = false
+        scope.launch {
+            val now = System.currentTimeMillis()
+            go("mix/${dao.insertMix(Mix(name = name, createdAt = now, updatedAt = now, rules = rule.toJson()))}")
+        }
     }
 
     if (naming) NameDialog("New mix", "", onDismiss = { naming = false; adding = null }) { name ->

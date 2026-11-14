@@ -73,4 +73,27 @@ class MatcherTest {
         assertEquals(0, nextIndex(2, 3, Repeat.ONE, natural = false))
         assertEquals(null, nextIndex(-1, 0, Repeat.ALL, natural = false))
     }
+
+    @Test fun smartRulePicks() {
+        fun t(id: String, service: String = SPOTIFY, artist: String = "A", ms: Long = 180_000) = Track("$service:$id", service, id, id, artist, null, ms, null, null)
+        val facts = listOf(
+            TrackFacts(t("old"), addedAt = 1, plays = 5, lastPlayed = 10),
+            TrackFacts(t("new"), addedAt = 3, plays = 0, lastPlayed = 0),
+            TrackFacts(t("mid", artist = "Other Band", ms = 600_000), addedAt = 2, plays = 9, lastPlayed = 5),
+            TrackFacts(t("yt", YOUTUBE), addedAt = 4, plays = 0, lastPlayed = 0),
+        )
+        fun ids(rule: SmartRule, linked: Map<String, String> = emptyMap()) = rule.pick(facts, linked).map { it.remoteId }
+        assertEquals(listOf("yt", "new", "mid", "old"), ids(SmartRule("added")))
+        assertEquals(listOf("yt", "new"), ids(SmartRule("never")))
+        assertEquals(listOf("mid", "old"), ids(SmartRule("most")))
+        assertEquals(listOf("mid", "old"), ids(SmartRule("forgotten")))
+        assertEquals(listOf("mid"), ids(SmartRule("added", artist = "other")))
+        assertEquals(listOf("new", "old"), ids(SmartRule("added", service = SPOTIFY, maxMinutes = 5)))
+        assertEquals(listOf("yt"), ids(SmartRule("added", limit = 1)))
+        // A song kept on both services appears once: the copy that sorts first.
+        assertEquals(listOf("yt", "mid", "old"), ids(SmartRule("added"), mapOf("youtube:yt" to "spotify:new")))
+        val rule = SmartRule("forgotten", "Band", YOUTUBE, 7, 20)
+        assertEquals(rule, SmartRule.parse(rule.toJson()))
+        assertEquals(SmartRule(), SmartRule.parse("not json"))
+    }
 }

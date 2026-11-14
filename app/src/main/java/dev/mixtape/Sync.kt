@@ -27,8 +27,11 @@ class Sync(private val dao: LibraryDao) {
         for (p in lists) {
             if (p.version != null && dao.playlist(p.id)?.version == p.version) continue
             try {
-                val tracks = pages { get(it ?: "$SPOTIFY_API/playlists/${p.remoteId}/items?limit=50", token).let(SpotifyJson::items) }
-                dao.savePlaylist(p.copy(syncedAt = System.currentTimeMillis()), tracks)
+                val added = HashMap<String, Long>()
+                val tracks = pages { url ->
+                    get(url ?: "$SPOTIFY_API/playlists/${p.remoteId}/items?limit=50", token).also { added += SpotifyJson.addedAt(it) }.let(SpotifyJson::items)
+                }
+                dao.savePlaylist(p.copy(syncedAt = System.currentTimeMillis()), tracks, added)
             } catch (e: HttpError) {
                 if (e.code != 403 && e.code != 404) throw e
                 // Keep it listed but empty, with no version so the next sync tries again.
@@ -46,15 +49,16 @@ class Sync(private val dao: LibraryDao) {
         }
         for (p in lists) {
             if (p.version != null && dao.playlist(p.id)?.version == p.version) continue
+            val added = HashMap<String, Long>()
             val items = pages { tok ->
                 get("$YOUTUBE_API/playlistItems?part=snippet,contentDetails&maxResults=50&playlistId=${enc(p.remoteId)}${pageParam(tok)}", token)
-                    .let(YouTubeJson::items)
+                    .also { added += YouTubeJson.addedAt(it) }.let(YouTubeJson::items)
             }
             val durations = HashMap<String, Long>()
             for (ids in items.map { it.remoteId }.distinct().chunked(50)) {
                 durations += get("$YOUTUBE_API/videos?part=contentDetails&id=${ids.joinToString(",")}", token).let(YouTubeJson::durations)
             }
-            dao.savePlaylist(p.copy(syncedAt = System.currentTimeMillis()), items.map { it.copy(durationMs = durations[it.remoteId] ?: 0) })
+            dao.savePlaylist(p.copy(syncedAt = System.currentTimeMillis()), items.map { it.copy(durationMs = durations[it.remoteId] ?: 0) }, added)
         }
         dao.keepOnly(YOUTUBE, lists.map { it.id })
     }
