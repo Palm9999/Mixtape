@@ -6,12 +6,20 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.IBinder
 import android.service.notification.NotificationListenerService
+import androidx.work.Constraints
+import androidx.work.CoroutineWorker
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkerParameters
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -29,9 +37,24 @@ class MixtapeApp : Application() {
     val sync by lazy { Sync(dao) }
     val player by lazy { Player(this, dao) }
 
-    /** Works off the matching backlog in the background; safe to call often. */
+    /** Works off the matching backlog under WorkManager, so it carries on after Mixtape is closed; safe to call often. */
     fun matchInBackground() {
-        if (spotify.signedIn) scope.launch { sync.matchBacklog { spotify.token() } }
+        if (!spotify.signedIn) return
+        val work = OneTimeWorkRequestBuilder<MatchWorker>()
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .build()
+        // KEEP: a run already queued or under way is left alone; it retries until nothing is unmatched.
+        WorkManager.getInstance(this).enqueueUniqueWork("match", ExistingWorkPolicy.KEEP, work)
+    }
+}
+
+class MatchWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        val app = applicationContext as MixtapeApp
+        if (!app.spotify.signedIn) return Result.success()
+        // matchBacklog stops quietly on a network error or a 429; retry (with backoff) while tracks are left.
+        val done = runCatching { app.sync.matchBacklog { app.spotify.token() }; app.dao.unmatchedYouTube().isEmpty() }.getOrDefault(false)
+        return if (done) Result.success() else Result.retry()
     }
 }
 

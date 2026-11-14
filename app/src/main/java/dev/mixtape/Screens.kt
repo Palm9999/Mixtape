@@ -37,6 +37,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -68,6 +69,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
+import android.os.SystemClock
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import kotlinx.coroutines.launch
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -203,19 +207,41 @@ fun LibraryScreen(
     onRefresh: () -> Unit,
     onOpen: (String) -> Unit,
     onNewMix: () -> Unit,
+    player: Player,
+    links: List<TrackLink>,
+    onAdd: (List<Track>, String?) -> Unit,
 ) {
     val all by dao.playlists().collectAsState(initial = emptyList())
     val sizes by dao.mixSizes().collectAsState(initial = emptyList())
     val pending by dao.pendingLinks().collectAsState(initial = emptyList())
     var filter by rememberSaveable { mutableStateOf<String?>(null) }
     val shown = if (filter == null) all else all.filter { it.service == filter }
+    var query by rememberSaveable { mutableStateOf("") }
+    val searching = query.trim().length >= 2
+    val found by produceState(emptyList<Track>(), query, all) {
+        value = if (searching) dao.searchTracks(query.trim().replace(Regex("""[\\%_]""")) { "\\" + it.value }) else emptyList()
+    }
+    val hits = if (filter == null) found else found.filter { it.service == filter }
+    val linkOf = remember(links) { links.associateBy { it.youtubeTrackId } }
     Column(modifier) {
+        OutlinedTextField(
+            query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            placeholder = { Text("Search tracks on both services") }, singleLine = true,
+            trailingIcon = { if (query.isNotEmpty()) IconButton({ query = "" }) { Icon(Glyphs.Close, "Clear search") } },
+        )
         Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(filter == null, { filter = null }, { Text("All") })
             FilterChip(filter == SPOTIFY, { filter = SPOTIFY }, { Text("Spotify") })
             FilterChip(filter == YOUTUBE, { filter = YOUTUBE }, { Text("YouTube") })
         }
-        PullToRefreshBox(refreshing, onRefresh, Modifier.fillMaxSize()) {
+        if (searching) LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+            item(key = "count") { SectionHeader(if (hits.isEmpty()) "No tracks found" else "${hits.size} track(s)") }
+            itemsIndexed(hits, key = { _, t -> t.id }) { i, t ->
+                TrackRow(t, linkOf[t.id], Modifier.clickable { player.play(hits, i) }) {
+                    IconButton({ onAdd(listOf(t), null) }) { Icon(Glyphs.Add, "Add to a mix") }
+                }
+            }
+        } else PullToRefreshBox(refreshing, onRefresh, Modifier.fillMaxSize()) {
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
                 if (pending.isNotEmpty()) item(key = "review") {
                     Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).clickable { onOpen("review") }) {
@@ -500,6 +526,36 @@ fun NowPlayingScreen(modifier: Modifier, ps: PlayerState, player: Player) {
                         }
                     }
                     IconButton(player::next) { Icon(Glyphs.Next, "Next", Modifier.size(36.dp)) }
+                }
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected = ps.repeat != Repeat.OFF, onClick = player::cycleRepeat,
+                        label = { Text(when (ps.repeat) { Repeat.OFF -> "Repeat"; Repeat.ALL -> "Repeat all"; Repeat.ONE -> "Repeat one" }) },
+                    )
+                    FilterChip(selected = false, onClick = player::shuffleUpcoming, label = { Text("Shuffle rest") })
+                    Box {
+                        var menu by remember { mutableStateOf(false) }
+                        // Re-read the clock once a minute while the timer runs.
+                        val left by produceState(0L, ps.sleepAt) {
+                            while (true) {
+                                value = ps.sleepAt?.let { (it - SystemClock.elapsedRealtime() + 59_999) / 60_000 } ?: 0
+                                delay(15_000)
+                            }
+                        }
+                        FilterChip(
+                            selected = ps.sleepAt != null, onClick = { menu = true },
+                            label = { Text(if (ps.sleepAt != null) "Sleep in $left min" else "Sleep timer") },
+                        )
+                        DropdownMenu(menu, { menu = false }) {
+                            listOf(15, 30, 45, 60).forEach { m ->
+                                DropdownMenuItem({ Text("$m minutes") }, { menu = false; player.sleepIn(m) })
+                            }
+                            if (ps.sleepAt != null) DropdownMenuItem({ Text("Turn off") }, { menu = false; player.sleepIn(null) })
+                        }
+                    }
                 }
             }
         }

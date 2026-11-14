@@ -6,7 +6,7 @@ Personal-use Android app (one user, sideloaded, never published) that merges Spo
 
 ## Status
 
-All six milestones of the build plan are built and merged to `main` (PR #1). `./gradlew testDebugUnitTest lintDebug assembleDebug` is green (13 JVM tests, 0 lint errors). GitHub Actions runs the same on every push to `main` and on every PR, and uploads the debug APK as the `mixtape-debug-apk` artifact.
+All six milestones of the build plan are built and merged to `main` (PR #1). `./gradlew testDebugUnitTest lintDebug assembleDebug` is green (14 JVM tests, 0 lint errors). GitHub Actions runs the same on every push to `main` and on every PR, and uploads the debug APK as the `mixtape-debug-apk` artifact.
 
 **The user installed the APK and reported "the app works" (2026-11-13).** They gave no detail on which flows they exercised, so do not assume every item below was checked. Ask before relying on any one of them:
 
@@ -15,20 +15,24 @@ All six milestones of the build plan are built and merged to `main` (PR #1). `./
 - match review, and a linked YouTube track playing from Spotify
 - whether Spotify refused the tracks of any playlist (Development Mode limits)
 
-## Feature plan (agreed with the user 2026-11-13, one PR per step, in this order)
+## Feature plan (agreed with the user 2026-11-13; one PR per phase, one commit per step)
+
+The user said on 2026-11-14: complete all steps, and merge each PR yourself once CI is green. That also confirms steps 8 and 10.
 
 1. **Mix backup/restore**: built, see below.
-2. Shuffle, repeat, sleep timer (in `Player`, order saved in the existing SharedPreferences queue entry).
-3. Unified search over both libraries (one `LIKE` query, results reuse the add-to-mix dialog).
-4. Matching backlog under WorkManager.
+2. **Repeat, shuffle rest, sleep timer**: built. Chips on Now Playing. `nextIndex()` in `Player.kt` is the pure rule (tested). Shuffle-play of a playlist or mix already existed.
+3. **Search**: built. Field on the Library screen, `LibraryDao.searchTracks` (one `LIKE` query, 200 rows).
+4. **Matching under WorkManager**: built. `MatchWorker` in `PlaybackService.kt`, unique work `match`, retries while unmatched tracks remain.
 5. Play history and stats. Steps 5 to 7 share **one** Room migration v2 to v3: a `play_event` table, `rules` on `mix`, `added_at` on `playlist_track`.
 6. Smart mixes (rules as JSON on the mix; "never played" needs step 5).
 7. Library cleanup screen (duplicates across services, YouTube tracks with no Spotify match).
-8. Mixtape's own media session. Reverses a decision below; build as a spike and drop it if headset buttons misbehave on the phone. The user has not yet confirmed this.
+8. Mixtape's own media session. Reverses a decision below; build as a spike and drop it if headset buttons misbehave on the phone.
 9. Home-screen widget (plain `AppWidgetProvider`, reusing the service intents).
-10. Export a mix to Spotify / YouTube. Needs the "nothing is written back" ruling lifted by the user, and write scopes. Not yet confirmed.
+10. Export a mix to Spotify / YouTube. Needs write scopes and a re-sign-in on both services; the user lifted the "nothing is written back" ruling for this step.
 
-Backup (step 1): Accounts screen, "Back up mixes" / "Restore", through the system file picker. The file (`BackupJson` in `Mappers.kt`, version 1) holds mixes, their items, the tracks they use, and `manual`/`reviewed` links. `LibraryDao.restore` only adds: a mix with the same name and creation time is skipped, existing track rows and the user's own link decisions are kept. Not yet tried on the phone.
+Steps 1 to 4 have not been tried on the phone.
+
+Backup (step 1): Accounts screen, "Back up mixes" / "Restore", through the system file picker. The file (`BackupJson` in `Mappers.kt`, version 1) holds mixes, their items, the tracks they use, and `manual`/`reviewed` links. `LibraryDao.restore` only adds: a mix with the same name and creation time is skipped, existing track rows and the user's own link decisions are kept. 
 
 Other candidates, not requested: tune the matching thresholds (0.85 / 0.6 in `Matcher.kt`) on the real library; replace the hand-written mapper fixtures with recorded API responses; move to AGP 9.1 / compileSdk 37 to unpin AndroidX.
 
@@ -60,7 +64,7 @@ The Spotify client ID is in `gradle.properties`. Debug keystore SHA-1 (registere
 
 - HTTP is `HttpURLConnection` + `org.json`; no Ktor/Retrofit. Coil loads artwork; `sh.calvin.reorderable` does drag-to-reorder.
 - The App Remote AAR is committed in `app/libs/` (it is not on Maven; from the github.com/spotify/android-sdk release `v0.8.0-appremote_v2.1.0-auth`).
-- Matching runs in the app's own coroutine scope after each sync, about one Spotify search per second, and resumes on the next sync. WorkManager was not added. Tracks already in the Spotify library are matched locally with no search call.
+- Matching runs under WorkManager after each sync, about one Spotify search per second. Tracks already in the Spotify library are matched locally with no search call.
 - Score = 0.5 title + 0.25 artist + 0.25 duration. `track_link.source`: `auto` (0.85 and up), `pending` (0.6 to 0.85, shown on the review screen, not used for playback), `reviewed`, `manual` (never re-matched; null Spotify ID pins the track to YouTube), `none`.
 - Queue state is a SharedPreferences entry (track IDs and index), not DataStore.
 - Sync keeps going when Spotify answers 403/404 for one playlist's items: the playlist is listed empty and its name is reported.

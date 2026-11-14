@@ -55,6 +55,7 @@ dependencies {
     implementation("androidx.room:room-runtime:2.8.3")
     ksp("androidx.room:room-compiler:2.8.3")
     implementation("androidx.security:security-crypto:1.1.0")
+    implementation("androidx.work:work-runtime:2.10.5")
     implementation("io.coil-kt.coil3:coil-compose:3.3.0")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
     implementation("sh.calvin.reorderable:reorderable:2.5.1")

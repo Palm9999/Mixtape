@@ -62,4 +62,15 @@ class MatcherTest {
         assertEquals(listOf(1, 4, 6, 2, 5, 3), Matcher.interleave(listOf(listOf(1, 2, 3), listOf(4, 5), listOf(6))))
         assertEquals(emptyList<Int>(), Matcher.interleave(emptyList<List<Int>>()))
     }
+
+    @Test fun nextIndexFollowsRepeat() {
+        assertEquals(1, nextIndex(0, 3, Repeat.OFF, natural = true))
+        assertEquals(null, nextIndex(2, 3, Repeat.OFF, natural = true))
+        assertEquals(0, nextIndex(2, 3, Repeat.ALL, natural = true))
+        assertEquals(2, nextIndex(2, 3, Repeat.ONE, natural = true))
+        // The next button leaves a repeated track, and wraps at the end.
+        assertEquals(2, nextIndex(1, 3, Repeat.ONE, natural = false))
+        assertEquals(0, nextIndex(2, 3, Repeat.ONE, natural = false))
+        assertEquals(null, nextIndex(-1, 0, Repeat.ALL, natural = false))
+    }
 }

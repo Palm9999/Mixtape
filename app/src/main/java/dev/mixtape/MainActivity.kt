@@ -250,6 +250,7 @@ private fun Mixtape(app: MixtapeApp) {
             else -> LibraryScreen(
                 modifier, dao, mixes, refreshing, ::refresh,
                 onOpen = ::go, onNewMix = { adding = null; naming = true },
+                player = player, links = links, onAdd = { tracks, source -> adding = Adding(tracks, source) },
             )
         }
     }
