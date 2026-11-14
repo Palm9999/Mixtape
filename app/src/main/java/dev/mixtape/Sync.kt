@@ -64,7 +64,6 @@ class Sync(private val dao: LibraryDao) {
      * locally; the rest cost one Spotify search each, about one per second. Stops quietly on any error (a 429, no
      * network) and picks up the remaining tracks on the next call.
      */
-    // ponytail: runs in the app's own scope, not WorkManager; the backlog only advances while Mixtape is alive.
     suspend fun matchBacklog(token: suspend () -> String) = withContext(Dispatchers.IO) {
         if (!matching.tryLock()) return@withContext
         try {
