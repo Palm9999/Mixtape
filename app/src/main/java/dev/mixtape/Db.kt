@@ -109,6 +109,13 @@ interface LibraryDao {
     )
     fun tracks(playlistId: String): Flow<List<Track>>
 
+    /** Title or artist contains [q]; the caller escapes %, _ and backslash in it. Every track row is in a playlist, a mix or a link. */
+    @Query(
+        "SELECT * FROM track WHERE title LIKE '%' || :q || '%' ESCAPE '\\' OR artist LIKE '%' || :q || '%' ESCAPE '\\' " +
+            "ORDER BY title COLLATE NOCASE LIMIT 200"
+    )
+    suspend fun searchTracks(q: String): List<Track>
+
     @Query("SELECT * FROM track WHERE id IN (:ids)")
     suspend fun tracksByIds(ids: List<String>): List<Track>
 

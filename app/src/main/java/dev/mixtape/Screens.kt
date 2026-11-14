@@ -37,6 +37,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -206,19 +207,41 @@ fun LibraryScreen(
     onRefresh: () -> Unit,
     onOpen: (String) -> Unit,
     onNewMix: () -> Unit,
+    player: Player,
+    links: List<TrackLink>,
+    onAdd: (List<Track>, String?) -> Unit,
 ) {
     val all by dao.playlists().collectAsState(initial = emptyList())
     val sizes by dao.mixSizes().collectAsState(initial = emptyList())
     val pending by dao.pendingLinks().collectAsState(initial = emptyList())
     var filter by rememberSaveable { mutableStateOf<String?>(null) }
     val shown = if (filter == null) all else all.filter { it.service == filter }
+    var query by rememberSaveable { mutableStateOf("") }
+    val searching = query.trim().length >= 2
+    val found by produceState(emptyList<Track>(), query, all) {
+        value = if (searching) dao.searchTracks(query.trim().replace(Regex("""[\\%_]""")) { "\\" + it.value }) else emptyList()
+    }
+    val hits = if (filter == null) found else found.filter { it.service == filter }
+    val linkOf = remember(links) { links.associateBy { it.youtubeTrackId } }
     Column(modifier) {
+        OutlinedTextField(
+            query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            placeholder = { Text("Search tracks on both services") }, singleLine = true,
+            trailingIcon = { if (query.isNotEmpty()) IconButton({ query = "" }) { Icon(Glyphs.Close, "Clear search") } },
+        )
         Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(filter == null, { filter = null }, { Text("All") })
             FilterChip(filter == SPOTIFY, { filter = SPOTIFY }, { Text("Spotify") })
             FilterChip(filter == YOUTUBE, { filter = YOUTUBE }, { Text("YouTube") })
         }
-        PullToRefreshBox(refreshing, onRefresh, Modifier.fillMaxSize()) {
+        if (searching) LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+            item(key = "count") { SectionHeader(if (hits.isEmpty()) "No tracks found" else "${hits.size} track(s)") }
+            itemsIndexed(hits, key = { _, t -> t.id }) { i, t ->
+                TrackRow(t, linkOf[t.id], Modifier.clickable { player.play(hits, i) }) {
+                    IconButton({ onAdd(listOf(t), null) }) { Icon(Glyphs.Add, "Add to a mix") }
+                }
+            }
+        } else PullToRefreshBox(refreshing, onRefresh, Modifier.fillMaxSize()) {
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
                 if (pending.isNotEmpty()) item(key = "review") {
                     Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).clickable { onOpen("review") }) {
