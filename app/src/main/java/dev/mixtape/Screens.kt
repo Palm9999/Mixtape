@@ -68,6 +68,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
+import android.os.SystemClock
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import kotlinx.coroutines.launch
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -500,6 +503,36 @@ fun NowPlayingScreen(modifier: Modifier, ps: PlayerState, player: Player) {
                         }
                     }
                     IconButton(player::next) { Icon(Glyphs.Next, "Next", Modifier.size(36.dp)) }
+                }
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected = ps.repeat != Repeat.OFF, onClick = player::cycleRepeat,
+                        label = { Text(when (ps.repeat) { Repeat.OFF -> "Repeat"; Repeat.ALL -> "Repeat all"; Repeat.ONE -> "Repeat one" }) },
+                    )
+                    FilterChip(selected = false, onClick = player::shuffleUpcoming, label = { Text("Shuffle rest") })
+                    Box {
+                        var menu by remember { mutableStateOf(false) }
+                        // Re-read the clock once a minute while the timer runs.
+                        val left by produceState(0L, ps.sleepAt) {
+                            while (true) {
+                                value = ps.sleepAt?.let { (it - SystemClock.elapsedRealtime() + 59_999) / 60_000 } ?: 0
+                                delay(15_000)
+                            }
+                        }
+                        FilterChip(
+                            selected = ps.sleepAt != null, onClick = { menu = true },
+                            label = { Text(if (ps.sleepAt != null) "Sleep in $left min" else "Sleep timer") },
+                        )
+                        DropdownMenu(menu, { menu = false }) {
+                            listOf(15, 30, 45, 60).forEach { m ->
+                                DropdownMenuItem({ Text("$m minutes") }, { menu = false; player.sleepIn(m) })
+                            }
+                            if (ps.sleepAt != null) DropdownMenuItem({ Text("Turn off") }, { menu = false; player.sleepIn(null) })
+                        }
+                    }
                 }
             }
         }

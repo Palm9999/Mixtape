@@ -48,10 +48,27 @@ data class PlayerState(
     val positionAt: Long = 0,
     val durationMs: Long = 0,
     val error: String? = null,
+    val repeat: Repeat = Repeat.OFF,
+    /** SystemClock.elapsedRealtime() at which the sleep timer stops playback; null when it is off. */
+    val sleepAt: Long? = null,
 ) {
     val current: Track? get() = queue.getOrNull(index)
     fun positionNow(): Long =
         if (playing) (positionMs + SystemClock.elapsedRealtime() - positionAt).coerceIn(0, durationMs.coerceAtLeast(positionMs)) else positionMs
+}
+
+enum class Repeat { OFF, ALL, ONE }
+
+/**
+ * The queue position to play after [index], or null to stop. [natural] is a track ending by itself;
+ * repeat-one holds only then, so the next button still moves on.
+ */
+fun nextIndex(index: Int, size: Int, repeat: Repeat, natural: Boolean): Int? = when {
+    size == 0 -> null
+    natural && repeat == Repeat.ONE -> index
+    index + 1 < size -> index + 1
+    repeat == Repeat.OFF -> null
+    else -> 0
 }
 
 /**
@@ -75,6 +92,7 @@ class Player(private val context: Context, private val dao: LibraryDao) {
     private var gen = 0
     private var job: Job? = null
     private var userPaused = false
+    private var sleepJob: Job? = null
 
     private var remote: SpotifyAppRemote? = null
     private var spotifyUri: String? = null
@@ -90,6 +108,7 @@ class Player(private val context: Context, private val dao: LibraryDao) {
     }
 
     init {
+        _state.update { it.copy(repeat = runCatching { Repeat.valueOf(prefs.getString("repeat", null) ?: "OFF") }.getOrDefault(Repeat.OFF)) }
         scope.launch { restore() }
     }
 
@@ -111,7 +130,33 @@ class Player(private val context: Context, private val dao: LibraryDao) {
         }
     }
 
-    fun next() = start(_state.value.index + 1)
+    fun next() = advance(natural = false)
+
+    fun cycleRepeat() {
+        _state.update { it.copy(repeat = Repeat.entries[(it.repeat.ordinal + 1) % Repeat.entries.size]) }
+        prefs.edit().putString("repeat", _state.value.repeat.name).apply()
+    }
+
+    /** Shuffles what comes after the current track. */
+    fun shuffleUpcoming() {
+        _state.update { it.copy(queue = it.queue.take(it.index + 1) + it.queue.drop(it.index + 1).shuffled()) }
+        save()
+    }
+
+    /** Stops playback after [minutes]; null turns the timer off. */
+    fun sleepIn(minutes: Int?) {
+        sleepJob?.cancel()
+        val at = minutes?.let { SystemClock.elapsedRealtime() + it * 60_000L }
+        _state.update { it.copy(sleepAt = at) }
+        if (at == null) return
+        // ponytail: delay() does not count deep sleep. The phone stays awake while music plays, and start()
+        // re-checks the deadline at every track change, so the worst case is stopping one track late.
+        sleepJob = scope.launch {
+            delay(minutes * 60_000L)
+            _state.update { it.copy(sleepAt = null) }
+            stop()
+        }
+    }
 
     fun previous() {
         val s = _state.value
@@ -147,12 +192,21 @@ class Player(private val context: Context, private val dao: LibraryDao) {
         else -> false
     }
 
+    private fun advance(natural: Boolean) {
+        val s = _state.value
+        // Ran off the end with repeat off: stop where we are.
+        nextIndex(s.index, s.queue.size, s.repeat, natural)?.let(::start) ?: stop()
+    }
+
     private fun start(index: Int) {
         val queue = _state.value.queue
-        if (index !in queue.indices) {
-            // Ran off the end: stop where we are.
-            if (index >= queue.size) stop()
-            return
+        if (index !in queue.indices) return
+        _state.value.sleepAt?.let { at ->
+            if (SystemClock.elapsedRealtime() >= at) {
+                sleepJob?.cancel()
+                _state.update { it.copy(sleepAt = null) }
+                return stop()
+            }
         }
         val g = ++gen
         val track = queue[index]
@@ -198,7 +252,7 @@ class Player(private val context: Context, private val dao: LibraryDao) {
     private fun ended(g: Int) {
         if (g != gen) return
         pauseActive() // stop autoplay or the app's own queue from carrying on
-        start(_state.value.index + 1)
+        advance(natural = true)
     }
 
     private fun fail(g: Int, message: String) {
