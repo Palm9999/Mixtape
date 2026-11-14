@@ -43,7 +43,7 @@ class SpotifyAuth(context: Context) {
     fun signInIntent(activity: Activity): Intent {
         check(BuildConfig.SPOTIFY_CLIENT_ID.isNotEmpty()) { "Set spotifyClientId in gradle.properties" }
         val request = SpotifyAuthRequest.Builder(BuildConfig.SPOTIFY_CLIENT_ID, AuthorizationResponse.Type.CODE, REDIRECT)
-            .setScopes(arrayOf("playlist-read-private", "playlist-read-collaborative", "app-remote-control"))
+            .setScopes(arrayOf("playlist-read-private", "playlist-read-collaborative", "app-remote-control", "playlist-modify-private"))
             .setPkceInformation(PKCEInformationFactory.create())
             .build()
         pending = request
@@ -106,15 +106,18 @@ class SpotifyAuth(context: Context) {
 /** YouTube: Google Identity Authorization API, `youtube.readonly`. Google keeps the grant; we ask again silently each sync. */
 class YouTubeAuth(private val context: Context) {
     private val prefs = securePrefs(context)
-    private val request = GoogleAuthRequest.builder()
-        .setRequestedScopes(listOf(Scope("https://www.googleapis.com/auth/youtube.readonly")))
+    private fun request(write: Boolean) = GoogleAuthRequest.builder()
+        .setRequestedScopes(listOf(Scope("https://www.googleapis.com/auth/youtube" + if (write) "" else ".readonly")))
         .build()
 
     val signedIn get() = prefs.getBoolean(CONNECTED, false)
 
-    /** Returns a result that either has a token or needs [AuthorizationResult.getPendingIntent] shown to the user. */
-    suspend fun authorize(): AuthorizationResult = suspendCancellableCoroutine { cont ->
-        Identity.getAuthorizationClient(context).authorize(request)
+    /**
+     * Returns a result that either has a token or needs [AuthorizationResult.getPendingIntent] shown to the user.
+     * [write] asks for the wider scope that exporting a mix needs; syncing never does.
+     */
+    suspend fun authorize(write: Boolean = false): AuthorizationResult = suspendCancellableCoroutine { cont ->
+        Identity.getAuthorizationClient(context).authorize(request(write))
             .addOnSuccessListener { cont.resume(it) }
             .addOnFailureListener { cont.resumeWithException(it) }
     }

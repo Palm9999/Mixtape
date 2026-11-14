@@ -411,7 +411,10 @@ fun MatchPicker(app: MixtapeApp, youtube: Track, onDismiss: () -> Unit, report: 
 // --- Mix builder ---
 
 @Composable
-fun MixScreen(modifier: Modifier, app: MixtapeApp, mixId: Long, links: List<TrackLink>, onDeleted: () -> Unit) {
+fun MixScreen(
+    modifier: Modifier, app: MixtapeApp, mixId: Long, links: List<TrackLink>,
+    onExport: (service: String, name: String, tracks: List<Track>) -> Unit, onDeleted: () -> Unit,
+) {
     val dao = app.dao
     val scope = rememberCoroutineScope()
     val mix by dao.mix(mixId).collectAsState(initial = null)
@@ -456,6 +459,8 @@ fun MixScreen(modifier: Modifier, app: MixtapeApp, mixId: Long, links: List<Trac
                         })
                         DropdownMenuItem({ Text("Shuffle order") }, { menu = false; change { it.shuffled() } })
                     }
+                    DropdownMenuItem({ Text("Export to Spotify") }, { menu = false; onExport(SPOTIFY, mix?.name ?: "Mixtape", tracks) }, enabled = tracks.isNotEmpty())
+                    DropdownMenuItem({ Text("Export to YouTube Music") }, { menu = false; onExport(YOUTUBE, mix?.name ?: "Mixtape", tracks) }, enabled = tracks.isNotEmpty())
                     DropdownMenuItem({ Text("Rename") }, { menu = false; renaming = true })
                     DropdownMenuItem({ Text("Delete mix") }, { menu = false; deleting = true })
                 }

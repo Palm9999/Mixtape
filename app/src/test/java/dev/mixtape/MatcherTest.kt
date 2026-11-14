@@ -96,4 +96,14 @@ class MatcherTest {
         assertEquals(rule, SmartRule.parse(rule.toJson()))
         assertEquals(SmartRule(), SmartRule.parse("not json"))
     }
+
+    @Test fun exportIdsFollowLinks() {
+        fun t(id: String, service: String) = Track("$service:$id", service, id, id, "A", null, 1, null, null)
+        val tracks = listOf(t("s1", SPOTIFY), t("y1", YOUTUBE), t("y2", YOUTUBE), t("s2", SPOTIFY))
+        val links = mapOf("youtube:y1" to "spotify:s1", "youtube:y2" to "spotify:s9")
+        // y1 is the same song as s1, so it is not added twice; y2 goes in as its Spotify match.
+        assertEquals(listOf("spotify:s1", "spotify:s9", "spotify:s2"), Matcher.exportIds(tracks, links, SPOTIFY))
+        // s1 goes in as its YouTube copy; s2 has none and is left out.
+        assertEquals(listOf("youtube:y1", "youtube:y2"), Matcher.exportIds(tracks, links, YOUTUBE))
+    }
 }
