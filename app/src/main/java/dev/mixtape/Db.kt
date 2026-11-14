@@ -3,6 +3,7 @@ package dev.mixtape
 import android.content.Context
 import androidx.room.ColumnInfo
 import androidx.room.Dao
+import androidx.room.Embedded
 import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Index
@@ -14,6 +15,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
 import androidx.room.Upsert
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 const val SPOTIFY = "spotify"
@@ -54,6 +57,18 @@ data class PlaylistTrack(
     @ColumnInfo(name = "playlist_id") val playlistId: String,
     val position: Int,
     @ColumnInfo(name = "track_id") val trackId: String,
+    /** When the service says the track joined the playlist (epoch ms); 0 when unknown. */
+    @ColumnInfo(name = "added_at", defaultValue = "0") val addedAt: Long = 0,
+)
+
+/** One listen: a track that played to its end, or for 30 s before being skipped. */
+@Entity(tableName = "play_event", indices = [Index("track_id")])
+data class PlayEvent(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @ColumnInfo(name = "track_id") val trackId: String,
+    @ColumnInfo(name = "played_at") val playedAt: Long,
+    /** The app that played it: [SPOTIFY] or [YOUTUBE]. */
+    val via: String,
 )
 
 /** One row per YouTube track that has been through matching. Only [playable] links change what plays. */
@@ -83,6 +98,8 @@ data class Mix(
     val name: String,
     @ColumnInfo(name = "created_at") val createdAt: Long,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
+    /** A smart mix: [SmartRule] as JSON, evaluated when the mix is opened. Null for an ordinary mix. */
+    val rules: String? = null,
 )
 
 @Entity(tableName = "mix_item", primaryKeys = ["mix_id", "position"], indices = [Index("track_id")])
@@ -128,10 +145,10 @@ interface LibraryDao {
 
     /** Rebuilds playlist_track whole; the version is stored last so a failed sync retries. */
     @Transaction
-    suspend fun savePlaylist(p: Playlist, tracks: List<Track>) {
+    suspend fun savePlaylist(p: Playlist, tracks: List<Track>, addedAt: Map<String, Long> = emptyMap()) {
         upsertTracks(tracks)
         clearItems(p.id)
-        insertItems(tracks.mapIndexed { i, t -> PlaylistTrack(p.id, i, t.id) })
+        insertItems(tracks.mapIndexed { i, t -> PlaylistTrack(p.id, i, t.id, addedAt[t.id] ?: 0) })
         upsertPlaylist(p)
     }
 
@@ -141,10 +158,11 @@ interface LibraryDao {
     @Query("DELETE FROM playlist_track WHERE playlist_id NOT IN (SELECT id FROM playlist)")
     suspend fun deleteOrphanItems()
 
-    /** Tracks stay while a playlist, a mix or a link still points at them. */
+    /** Tracks stay while a playlist, a mix, a link or the play history still points at them. */
     @Query(
         "DELETE FROM track WHERE id NOT IN (SELECT track_id FROM playlist_track) " +
             "AND id NOT IN (SELECT track_id FROM mix_item) " +
+            "AND id NOT IN (SELECT track_id FROM play_event) " +
             "AND id NOT IN (SELECT spotify_track_id FROM track_link WHERE spotify_track_id IS NOT NULL)"
     )
     suspend fun deleteOrphanTracks()
@@ -189,6 +207,9 @@ interface LibraryDao {
     @Query("UPDATE mix SET name = :name, updated_at = :now WHERE id = :id")
     suspend fun renameMix(id: Long, name: String, now: Long = System.currentTimeMillis())
 
+    @Query("UPDATE mix SET rules = :rules, updated_at = :now WHERE id = :id")
+    suspend fun setMixRules(id: Long, rules: String, now: Long = System.currentTimeMillis())
+
     @Query("UPDATE mix SET updated_at = :now WHERE id = :id")
     suspend fun touchMix(id: Long, now: Long = System.currentTimeMillis())
 
@@ -216,6 +237,56 @@ interface LibraryDao {
         insertMixItems(items.mapIndexed { i, it -> it.copy(mixId = mixId, position = i) })
         touchMix(mixId)
     }
+
+    // --- history and smart mixes ---
+    @Insert suspend fun insertPlay(e: PlayEvent)
+
+    @Query(
+        "SELECT t.*, COUNT(*) AS plays FROM play_event e JOIN track t ON t.id = e.track_id " +
+            "GROUP BY t.id ORDER BY plays DESC, MAX(e.played_at) DESC LIMIT 50"
+    )
+    fun topTracks(): Flow<List<TrackPlays>>
+
+    @Query(
+        "SELECT t.artist AS name, COUNT(*) AS plays FROM play_event e JOIN track t ON t.id = e.track_id " +
+            "GROUP BY t.artist COLLATE NOCASE ORDER BY plays DESC LIMIT 20"
+    )
+    fun topArtists(): Flow<List<NamePlays>>
+
+    @Query("SELECT via AS name, COUNT(*) AS plays FROM play_event GROUP BY via ORDER BY plays DESC")
+    fun playsByService(): Flow<List<NamePlays>>
+
+    /** Every track in a playlist, with what a smart mix sorts and filters on. */
+    @Query(
+        "SELECT t.*, (SELECT MAX(added_at) FROM playlist_track pt WHERE pt.track_id = t.id) AS addedAt, " +
+            "(SELECT COUNT(*) FROM play_event e WHERE e.track_id = t.id) AS plays, " +
+            "COALESCE((SELECT MAX(played_at) FROM play_event e WHERE e.track_id = t.id), 0) AS lastPlayed " +
+            "FROM track t WHERE t.id IN (SELECT track_id FROM playlist_track)"
+    )
+    suspend fun trackFacts(): List<TrackFacts>
+
+    // --- cleanup ---
+    /** YouTube tracks whose Spotify match is also in a Spotify playlist: the same song kept on both services. */
+    @Query(
+        "SELECT t.* FROM track t JOIN track_link l ON l.youtube_track_id = t.id " +
+            "WHERE l.source IN ('auto', 'reviewed', 'manual') AND l.spotify_track_id IN (SELECT track_id FROM playlist_track) " +
+            "AND t.id IN (SELECT track_id FROM playlist_track) ORDER BY t.title COLLATE NOCASE"
+    )
+    fun onBothServices(): Flow<List<Track>>
+
+    /** YouTube tracks in a playlist that have no Spotify match. */
+    @Query(
+        "SELECT t.* FROM track t JOIN track_link l ON l.youtube_track_id = t.id " +
+            "WHERE l.spotify_track_id IS NULL AND t.id IN (SELECT track_id FROM playlist_track) ORDER BY t.title COLLATE NOCASE"
+    )
+    fun youtubeOnly(): Flow<List<Track>>
+
+    @Query(
+        "SELECT p.name AS playlist, t.title AS title, t.artist AS artist, COUNT(*) AS copies FROM playlist_track pt " +
+            "JOIN playlist p ON p.id = pt.playlist_id JOIN track t ON t.id = pt.track_id " +
+            "GROUP BY pt.playlist_id, pt.track_id HAVING COUNT(*) > 1 ORDER BY p.name COLLATE NOCASE, t.title COLLATE NOCASE"
+    )
+    fun repeatsInPlaylists(): Flow<List<Repeated>>
 
     // --- backup ---
     @Query("SELECT * FROM mix ORDER BY id")
@@ -268,13 +339,33 @@ interface LibraryDao {
 }
 
 data class MixSize(val mixId: Long, val count: Int)
+data class TrackPlays(@Embedded val track: Track, val plays: Int)
+data class NamePlays(val name: String, val plays: Int)
+data class TrackFacts(@Embedded val track: Track, val addedAt: Long, val plays: Int, val lastPlayed: Long)
+data class Repeated(val playlist: String, val title: String, val artist: String, val copies: Int)
+
+/** v3: play history, smart-mix rules, and when a track joined its playlist. Mixes must survive, so this is a real migration. */
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `play_event` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`track_id` TEXT NOT NULL, `played_at` INTEGER NOT NULL, `via` TEXT NOT NULL)"
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_play_event_track_id` ON `play_event` (`track_id`)")
+        db.execSQL("ALTER TABLE `mix` ADD COLUMN `rules` TEXT")
+        db.execSQL("ALTER TABLE `playlist_track` ADD COLUMN `added_at` INTEGER NOT NULL DEFAULT 0")
+        // Forget playlist versions so the next sync re-reads every playlist and fills added_at.
+        db.execSQL("UPDATE `playlist` SET `version` = NULL")
+    }
+}
 
 // Schema v2 adds track_link, mix and mix_item. v1 held only re-syncable data, so it is dropped rather than migrated.
-// Mixes exist only on the phone: any later schema change needs a real Migration.
+// Mixes exist only on the phone: any later schema change needs a real Migration. The exported schemas are in app/schemas;
+// a migration's SQL must produce exactly what the new version's JSON there describes.
 @Database(
-    entities = [Playlist::class, Track::class, PlaylistTrack::class, TrackLink::class, Mix::class, MixItem::class],
-    version = 2,
-    exportSchema = false,
+    entities = [Playlist::class, Track::class, PlaylistTrack::class, TrackLink::class, Mix::class, MixItem::class, PlayEvent::class],
+    version = 3,
+    exportSchema = true,
 )
 abstract class MixtapeDb : RoomDatabase() {
     abstract fun dao(): LibraryDao
@@ -284,6 +375,7 @@ abstract class MixtapeDb : RoomDatabase() {
         fun get(context: Context): MixtapeDb = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, MixtapeDb::class.java, "mixtape.db")
                 .fallbackToDestructiveMigrationFrom(true, 1)
+                .addMigrations(MIGRATION_2_3)
                 .build().also { instance = it }
         }
     }

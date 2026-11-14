@@ -6,7 +6,7 @@ Personal-use Android app (one user, sideloaded, never published) that merges Spo
 
 ## Status
 
-All six milestones of the build plan are built and merged to `main` (PR #1). `./gradlew testDebugUnitTest lintDebug assembleDebug` is green (14 JVM tests, 0 lint errors). GitHub Actions runs the same on every push to `main` and on every PR, and uploads the debug APK as the `mixtape-debug-apk` artifact.
+All six milestones of the build plan are built and merged to `main` (PR #1). `./gradlew testDebugUnitTest lintDebug assembleDebug` is green (16 JVM tests, 0 lint errors). GitHub Actions runs the same on every push to `main` and on every PR, and uploads the debug APK as the `mixtape-debug-apk` artifact.
 
 **The user installed the APK and reported "the app works" (2026-11-13).** They gave no detail on which flows they exercised, so do not assume every item below was checked. Ask before relying on any one of them:
 
@@ -23,14 +23,14 @@ The user said on 2026-11-14: complete all steps, and merge each PR yourself once
 2. **Repeat, shuffle rest, sleep timer**: built. Chips on Now Playing. `nextIndex()` in `Player.kt` is the pure rule (tested). Shuffle-play of a playlist or mix already existed.
 3. **Search**: built. Field on the Library screen, `LibraryDao.searchTracks` (one `LIKE` query, 200 rows).
 4. **Matching under WorkManager**: built. `MatchWorker` in `PlaybackService.kt`, unique work `match`, retries while unmatched tracks remain.
-5. Play history and stats. Steps 5 to 7 share **one** Room migration v2 to v3: a `play_event` table, `rules` on `mix`, `added_at` on `playlist_track`.
-6. Smart mixes (rules as JSON on the mix; "never played" needs step 5).
-7. Library cleanup screen (duplicates across services, YouTube tracks with no Spotify match).
+5. **Play history and stats**: built. `Player.logPlay` records a listen (played to the end, or 30 s before a skip). Stats screen from the Library menu.
+6. **Smart mixes**: built. `SmartRule` in `Matcher.kt` (pure, tested), stored as JSON in `mix.rules`, evaluated in `MixScreen` on open; no `mix_item` rows.
+7. **Library cleanup**: built. Read-only lists from the Library menu: twice in one playlist, kept on both services, YouTube only (opens `MatchPicker`).
 8. Mixtape's own media session. Reverses a decision below; build as a spike and drop it if headset buttons misbehave on the phone.
 9. Home-screen widget (plain `AppWidgetProvider`, reusing the service intents).
 10. Export a mix to Spotify / YouTube. Needs write scopes and a re-sign-in on both services; the user lifted the "nothing is written back" ruling for this step.
 
-Steps 1 to 4 have not been tried on the phone.
+Steps 1 to 7 have not been tried on the phone. In particular the v2 to v3 migration has only been checked against the exported schema and by running its SQL on a v2-shaped SQLite file, not on a device.
 
 Backup (step 1): Accounts screen, "Back up mixes" / "Restore", through the system file picker. The file (`BackupJson` in `Mappers.kt`, version 1) holds mixes, their items, the tracks they use, and `manual`/`reviewed` links. `LibraryDao.restore` only adds: a mix with the same name and creation time is skipped, existing track rows and the user's own link decisions are kept. 
 
@@ -42,7 +42,7 @@ The Spotify client ID is in `gradle.properties`. Debug keystore SHA-1 (registere
 
 ## Where things live (`app/src/main/java/dev/mixtape/`)
 
-- `Db.kt`: Room schema v2: `playlist`, `track`, `playlist_track`, `track_link`, `mix`, `mix_item`, and the DAO. IDs are `"<service>:<remote_id>"`.
+- `Db.kt`: Room schema v3: `playlist`, `track`, `playlist_track`, `track_link`, `mix`, `mix_item`, `play_event`, the DAO, and `MIGRATION_2_3`. Schemas are exported to `app/schemas`. IDs are `"<service>:<remote_id>"`.
 - `Mappers.kt`: JSON to rows for both APIs (pure, tested).
 - `Matcher.kt`: title cleanup, scoring, mix dedupe and interleave (pure, tested in `MatcherTest`).
 - `Sync.kt`: paged read-only sync of both libraries, Spotify search, the matching backlog.
@@ -74,7 +74,7 @@ The Spotify client ID is in `gradle.properties`. Debug keystore SHA-1 (registere
 
 ## Gotchas
 
-- Schema: v1 is dropped on upgrade (it held only re-syncable data). Mixes exist only on the phone, so **any further schema change needs a real Room `Migration`**.
+- Schema: v1 is dropped on upgrade (it held only re-syncable data). Mixes exist only on the phone, so **any further schema change needs a real Room `Migration`**, written to match the new JSON in `app/schemas`. `MIGRATION_2_3` also nulls `playlist.version`, so the first sync after the upgrade re-reads every playlist (to fill `added_at`).
 - The Spotify Feb 2026 API could not be checked from the build environment (developer.spotify.com is not reachable). The mapper accepts `item` and `track`; ISRC is read when present, and dedupe and matching work without it.
 - Sideloaded APKs on Android 13+ may show notification access greyed out: App info, ⋮, "Allow restricted settings". Installing with `adb` or `./gradlew installDebug` avoids this.
 - The screen-off launch of YouTube Music depends on "Display over other apps". If Android still blocks it, playback stops with an error after 15 s. This is the doc's main open risk; test it early.

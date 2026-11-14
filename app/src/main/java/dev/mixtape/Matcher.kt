@@ -125,3 +125,46 @@ object Matcher {
         return out
     }
 }
+
+/**
+ * What a smart mix holds. [sort]: "added" (newest first), "never" (not played yet), "most" (most played),
+ * "forgotten" (played before, longest ago first). The filters narrow it; 0 and blank mean no filter.
+ */
+data class SmartRule(val sort: String = "added", val artist: String = "", val service: String? = null, val maxMinutes: Int = 0, val limit: Int = 50) {
+    fun toJson(): String = org.json.JSONObject().put("sort", sort).put("artist", artist).put("service", service)
+        .put("max_minutes", maxMinutes).put("limit", limit).toString()
+
+    /** The tracks this rule picks, in order. A song kept on both services ([linked]: YouTube ID to Spotify ID) appears once. */
+    fun pick(facts: List<TrackFacts>, linked: Map<String, String>): List<Track> {
+        val kept = facts.filter { f ->
+            (artist.isBlank() || f.track.artist.contains(artist.trim(), ignoreCase = true)) &&
+                (service == null || f.track.service == service) &&
+                (maxMinutes <= 0 || f.track.durationMs <= maxMinutes * 60_000L)
+        }
+        val sorted = when (sort) {
+            "never" -> kept.filter { it.plays == 0 }.sortedByDescending { it.addedAt }
+            "most" -> kept.filter { it.plays > 0 }.sortedByDescending { it.plays }
+            "forgotten" -> kept.filter { it.plays > 0 }.sortedBy { it.lastPlayed }
+            else -> kept.sortedByDescending { it.addedAt }
+        }
+        return Matcher.dedupe(emptyList(), sorted.map { it.track }, linked).take(limit.coerceAtLeast(1))
+    }
+
+    fun summary(): String = listOfNotNull(
+        SORTS.firstOrNull { it.first == sort }?.second ?: SORTS[0].second,
+        artist.takeIf { it.isNotBlank() },
+        service?.let { if (it == SPOTIFY) "Spotify" else "YouTube" },
+        maxMinutes.takeIf { it > 0 }?.let { "up to $it min" },
+        "$limit tracks",
+    ).joinToString(" · ")
+
+    companion object {
+        val SORTS = listOf("added" to "Recently added", "never" to "Never played", "most" to "Most played", "forgotten" to "Forgotten")
+
+        fun parse(json: String): SmartRule = runCatching {
+            val o = org.json.JSONObject(json)
+            SmartRule(o.optString("sort", "added"), o.optString("artist"), o.optString("service").takeIf { it == SPOTIFY || it == YOUTUBE },
+                o.optInt("max_minutes"), o.optInt("limit", 50))
+        }.getOrDefault(SmartRule())
+    }
+}

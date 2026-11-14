@@ -69,6 +69,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.input.KeyboardType
 import android.os.SystemClock
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -207,6 +210,7 @@ fun LibraryScreen(
     onRefresh: () -> Unit,
     onOpen: (String) -> Unit,
     onNewMix: () -> Unit,
+    onNewSmart: () -> Unit,
     player: Player,
     links: List<TrackLink>,
     onAdd: (List<Track>, String?) -> Unit,
@@ -249,7 +253,7 @@ fun LibraryScreen(
                     }
                 }
                 if (filter == null) {
-                    item(key = "mixes") { SectionHeader("Mixes") { TextButton(onNewMix) { Text("New mix") } } }
+                    item(key = "mixes") { SectionHeader("Mixes") { TextButton(onNewSmart) { Text("New smart mix") }; TextButton(onNewMix) { Text("New mix") } } }
                     if (mixes.isEmpty()) item(key = "nomixes") {
                         Text(
                             "A mix is one queue built from playlists and tracks on both services.",
@@ -260,7 +264,7 @@ fun LibraryScreen(
                         val count = sizes.firstOrNull { it.mixId == mix.id }?.count ?: 0
                         ListItem(
                             headlineContent = { Text(mix.name) },
-                            supportingContent = { Text("$count track(s)") },
+                            supportingContent = { Text(mix.rules?.let { SmartRule.parse(it).summary() } ?: "$count track(s)") },
                             modifier = Modifier.clickable { onOpen("mix/${mix.id}") },
                         )
                     }
@@ -415,7 +419,13 @@ fun MixScreen(modifier: Modifier, app: MixtapeApp, mixId: Long, links: List<Trac
     val linkById = remember(links) { links.associateBy { it.youtubeTrackId } }
     // Local copy so a drag moves rows at once; written back when the drag ends.
     var tracks by remember { mutableStateOf(emptyList<Track>()) }
-    LaunchedEffect(saved) { tracks = saved }
+    // A smart mix has no stored items: its rule is evaluated against the library every time it is opened.
+    val rule = mix?.rules?.let(SmartRule::parse)
+    val picked by produceState(emptyList<Track>(), mix?.rules, links) {
+        value = rule?.pick(dao.trackFacts(), links.filter { it.playable }.associate { it.youtubeTrackId to it.spotifyTrackId!! }) ?: emptyList()
+    }
+    LaunchedEffect(saved, picked, rule != null) { tracks = if (rule != null) picked else saved }
+    var editing by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
@@ -438,31 +448,41 @@ fun MixScreen(modifier: Modifier, app: MixtapeApp, mixId: Long, links: List<Trac
             Box {
                 IconButton({ menu = true }) { Icon(Glyphs.More, "More") }
                 DropdownMenu(menu, { menu = false }) {
-                    // Round-robin over where tracks came from: each source playlist, then loose tracks per service.
-                    DropdownMenuItem({ Text("Interleave sources") }, {
-                        menu = false
-                        change { items -> Matcher.interleave(items.groupBy { it.source ?: it.trackId.substringBefore(':') }.values.toList()) }
-                    })
-                    DropdownMenuItem({ Text("Shuffle order") }, { menu = false; change { it.shuffled() } })
+                    if (rule != null) DropdownMenuItem({ Text("Edit rules") }, { menu = false; editing = true }) else {
+                        // Round-robin over where tracks came from: each source playlist, then loose tracks per service.
+                        DropdownMenuItem({ Text("Interleave sources") }, {
+                            menu = false
+                            change { items -> Matcher.interleave(items.groupBy { it.source ?: it.trackId.substringBefore(':') }.values.toList()) }
+                        })
+                        DropdownMenuItem({ Text("Shuffle order") }, { menu = false; change { it.shuffled() } })
+                    }
                     DropdownMenuItem({ Text("Rename") }, { menu = false; renaming = true })
                     DropdownMenuItem({ Text("Delete mix") }, { menu = false; deleting = true })
                 }
             }
         }
+        if (rule != null) Text("Smart mix · ${rule.summary()}", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelMedium)
         if (tracks.isEmpty()) Text(
-            "Empty. Open a playlist and use \"Add all to mix\", or a track's menu, to fill it. Duplicates are skipped.",
+            if (rule != null) "No tracks fit these rules yet." else
+                "Empty. Open a playlist and use \"Add all to mix\", or a track's menu, to fill it. Duplicates are skipped.",
             Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium,
         )
         LazyColumn(Modifier.fillMaxSize(), state = listState) {
             itemsIndexed(tracks, key = { _, t -> t.id }) { i, t ->
                 ReorderableItem(reorder, key = t.id) {
                     TrackRow(t, linkById[t.id], Modifier.clickable { app.player.play(tracks, i) }) {
-                        IconButton({ change { items -> items.filter { it.trackId != t.id } } }) { Icon(Glyphs.Close, "Remove") }
-                        IconButton({}, Modifier.draggableHandle(onDragStopped = ::saveOrder)) { Icon(Glyphs.Drag, "Drag to reorder") }
+                        if (rule == null) {
+                            IconButton({ change { items -> items.filter { it.trackId != t.id } } }) { Icon(Glyphs.Close, "Remove") }
+                            IconButton({}, Modifier.draggableHandle(onDragStopped = ::saveOrder)) { Icon(Glyphs.Drag, "Drag to reorder") }
+                        }
                     }
                 }
             }
         }
+    }
+    if (editing && rule != null) SmartDialog("Edit rules", mix?.name ?: "", rule, { editing = false }) { name, r ->
+        editing = false
+        scope.launch { dao.renameMix(mixId, name); dao.setMixRules(mixId, r.toJson()) }
     }
     if (renaming) NameDialog("Rename mix", mix?.name ?: "", { renaming = false }) { name ->
         renaming = false
@@ -475,6 +495,100 @@ fun MixScreen(modifier: Modifier, app: MixtapeApp, mixId: Long, links: List<Trac
         confirmButton = { TextButton({ deleting = false; scope.launch { dao.deleteMix(mixId); onDeleted() } }) { Text("Delete") } },
         dismissButton = { TextButton({ deleting = false }) { Text("Cancel") } },
     )
+}
+
+@Composable
+fun SmartDialog(title: String, name0: String, rule0: SmartRule, onDismiss: () -> Unit, onDone: (String, SmartRule) -> Unit) {
+    var name by remember { mutableStateOf(name0) }
+    var rule by remember { mutableStateOf(rule0) }
+    var minutes by remember { mutableStateOf(rule0.maxMinutes.takeIf { it > 0 }?.toString() ?: "") }
+    var limit by remember { mutableStateOf(rule0.limit.toString()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true)
+                SmartRule.SORTS.chunked(2).forEach { pair ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        pair.forEach { (key, label) -> FilterChip(rule.sort == key, { rule = rule.copy(sort = key) }, { Text(label) }) }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(rule.service == null, { rule = rule.copy(service = null) }, { Text("Both") })
+                    FilterChip(rule.service == SPOTIFY, { rule = rule.copy(service = SPOTIFY) }, { Text("Spotify") })
+                    FilterChip(rule.service == YOUTUBE, { rule = rule.copy(service = YOUTUBE) }, { Text("YouTube") })
+                }
+                OutlinedTextField(rule.artist, { rule = rule.copy(artist = it) }, label = { Text("Artist contains (optional)") }, singleLine = true)
+                val digits = KeyboardOptions(keyboardType = KeyboardType.Number)
+                OutlinedTextField(minutes, { minutes = it.filter(Char::isDigit).take(3) }, label = { Text("Longest track, minutes (optional)") }, singleLine = true, keyboardOptions = digits)
+                OutlinedTextField(limit, { limit = it.filter(Char::isDigit).take(4) }, label = { Text("Number of tracks") }, singleLine = true, keyboardOptions = digits)
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onDone(name.trim(), rule.copy(artist = rule.artist.trim(), maxMinutes = minutes.toIntOrNull() ?: 0, limit = limit.toIntOrNull()?.coerceAtLeast(1) ?: 50)) },
+                enabled = name.isNotBlank(),
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
+    )
+}
+
+// --- Stats and cleanup ---
+
+@Composable
+fun StatsScreen(modifier: Modifier, dao: LibraryDao) {
+    val tracks by dao.topTracks().collectAsState(initial = emptyList())
+    val artists by dao.topArtists().collectAsState(initial = emptyList())
+    val services by dao.playsByService().collectAsState(initial = emptyList())
+    LazyColumn(modifier, contentPadding = PaddingValues(bottom = 16.dp)) {
+        if (tracks.isEmpty()) item {
+            Text("Nothing yet. A track counts once it plays to the end, or for 30 seconds.", Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium)
+        }
+        if (services.isNotEmpty()) item {
+            Text(
+                "${services.sumOf { it.plays }} listen(s): " + services.joinToString { "${it.plays} in ${serviceName(it.name)}" },
+                Modifier.padding(16.dp), style = MaterialTheme.typography.bodyLarge,
+            )
+        }
+        if (artists.isNotEmpty()) item { SectionHeader("Top artists") }
+        items(artists, key = { "artist/${it.name}" }) { a ->
+            ListItem(headlineContent = { Text(a.name, maxLines = 1, overflow = TextOverflow.Ellipsis) }, trailingContent = { Text("${a.plays}") })
+        }
+        if (tracks.isNotEmpty()) item { SectionHeader("Top tracks") }
+        items(tracks, key = { it.track.id }) { t -> TrackRow(t.track, null) { Text(" · ${t.plays}×") } }
+    }
+}
+
+@Composable
+fun CleanupScreen(modifier: Modifier, app: MixtapeApp, links: List<TrackLink>, report: (Throwable) -> Unit) {
+    val dao = app.dao
+    val both by dao.onBothServices().collectAsState(initial = emptyList())
+    val alone by dao.youtubeOnly().collectAsState(initial = emptyList())
+    val repeats by dao.repeatsInPlaylists().collectAsState(initial = emptyList())
+    val linkById = remember(links) { links.associateBy { it.youtubeTrackId } }
+    var picking by remember { mutableStateOf<Track?>(null) }
+    LazyColumn(modifier, contentPadding = PaddingValues(bottom = 16.dp)) {
+        item {
+            Text(
+                "Mixtape only reads your libraries. Use these lists to tidy up in Spotify and YouTube Music.",
+                Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        item { SectionHeader("Twice in one playlist · ${repeats.size}") }
+        items(repeats) { r ->
+            ListItem(
+                headlineContent = { Text(r.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                supportingContent = { Text("${r.artist} · ${r.copies}× in ${r.playlist}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            )
+        }
+        item { SectionHeader("Kept on both services · ${both.size}") }
+        items(both, key = { "both/${it.id}" }) { t -> TrackRow(t, linkById[t.id]) }
+        item { SectionHeader("On YouTube only, tap to find on Spotify · ${alone.size}") }
+        items(alone, key = { "alone/${it.id}" }) { t -> TrackRow(t, linkById[t.id], Modifier.clickable { picking = t }) }
+    }
+    picking?.let { MatchPicker(app, it, { picking = null }, report) }
 }
 
 // --- Now Playing ---

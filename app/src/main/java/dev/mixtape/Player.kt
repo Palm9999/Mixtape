@@ -208,6 +208,8 @@ class Player(private val context: Context, private val dao: LibraryDao) {
                 return stop()
             }
         }
+        // Leaving a track by hand still counts as a listen once 30 s of it have played.
+        if (started() && _state.value.positionNow() > 30_000) logPlay()
         val g = ++gen
         val track = queue[index]
         userPaused = false
@@ -252,7 +254,18 @@ class Player(private val context: Context, private val dao: LibraryDao) {
     private fun ended(g: Int) {
         if (g != gen) return
         pauseActive() // stop autoplay or the app's own queue from carrying on
+        logPlay()
         advance(natural = true)
+    }
+
+    /** Records a listen of the current track, and marks it not started so it cannot be recorded twice. */
+    private fun logPlay() {
+        val s = _state.value
+        val track = s.current ?: return
+        val via = s.via ?: return
+        spotifyStarted = false
+        ytStarted = false
+        scope.launch { dao.insertPlay(PlayEvent(trackId = track.id, playedAt = System.currentTimeMillis(), via = via)) }
     }
 
     private fun fail(g: Int, message: String) {

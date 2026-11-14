@@ -9,6 +9,7 @@ data class Page<T>(val rows: List<T>, val next: String?)
 
 private fun JSONObject.str(key: String): String? = optString(key).takeIf { has(key) && !isNull(key) && it.isNotEmpty() }
 private fun JSONArray?.objects(): List<JSONObject> = if (this == null) emptyList() else (0 until length()).mapNotNull { optJSONObject(it) }
+private fun epochMs(iso: String): Long? = runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrNull()
 private fun JSONObject.firstImage(): String? = optJSONArray("images").objects().firstOrNull()?.str("url")
 
 object SpotifyJson {
@@ -25,6 +26,12 @@ object SpotifyJson {
         json.optJSONArray("items").objects().mapNotNull { row -> (row.optJSONObject("item") ?: row.optJSONObject("track"))?.let(::track) },
         json.str("next"),
     )
+
+    /** Track ID to the time it was added, for the same page [items] reads. */
+    fun addedAt(json: JSONObject): Map<String, Long> = json.optJSONArray("items").objects().mapNotNull { row ->
+        val id = (row.optJSONObject("item") ?: row.optJSONObject("track"))?.str("id") ?: return@mapNotNull null
+        "$SPOTIFY:$id" to (row.str("added_at")?.let(::epochMs) ?: return@mapNotNull null)
+    }.toMap()
 
     /** `/search?type=track` results. */
     fun search(json: JSONObject): List<Track> =
@@ -74,6 +81,14 @@ object YouTubeJson {
         json.str("nextPageToken"),
     )
 
+    /** Track ID to the time it was added, for the same page [items] reads. */
+    fun addedAt(json: JSONObject): Map<String, Long> = json.optJSONArray("items").objects().mapNotNull { row ->
+        val s = row.optJSONObject("snippet") ?: return@mapNotNull null
+        val videoId = row.optJSONObject("contentDetails")?.str("videoId")
+            ?: s.optJSONObject("resourceId")?.str("videoId") ?: return@mapNotNull null
+        "$YOUTUBE:$videoId" to (s.str("publishedAt")?.let(::epochMs) ?: return@mapNotNull null)
+    }.toMap()
+
     /** videos.list → videoId to duration in ms. */
     fun durations(json: JSONObject): Map<String, Long> =
         json.optJSONArray("items").objects().mapNotNull { v ->
@@ -100,7 +115,7 @@ object BackupJson {
                 .put("score", l.score).put("source", l.source)
         }))
         .put("mixes", JSONArray(b.mixes.map { (m, items) ->
-            JSONObject().put("name", m.name).put("created_at", m.createdAt).put("updated_at", m.updatedAt)
+            JSONObject().put("name", m.name).put("created_at", m.createdAt).put("updated_at", m.updatedAt).put("rules", m.rules)
                 .put("items", JSONArray(items.map { JSONObject().put("track_id", it.trackId).put("source", it.source) }))
         }))
 
@@ -124,7 +139,7 @@ object BackupJson {
             val name = m.str("name") ?: return@mapNotNull null
             val items = m.optJSONArray("items").objects().filter { it.str("track_id") in known }
                 .mapIndexed { i, it -> MixItem(0, i, it.getString("track_id"), it.str("source")) }
-            Mix(name = name, createdAt = m.optLong("created_at"), updatedAt = m.optLong("updated_at")) to items
+            Mix(name = name, createdAt = m.optLong("created_at"), updatedAt = m.optLong("updated_at"), rules = m.str("rules")) to items
         }
         return Backup(tracks, links, mixes)
     }
