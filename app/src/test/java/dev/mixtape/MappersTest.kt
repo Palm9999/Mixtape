@@ -59,4 +59,36 @@ class MappersTest {
             YouTubeJson.durations(json("youtube_videos.json")),
         )
     }
+
+    @Test fun backupRoundTrip() {
+        val sp = Track("spotify:a", SPOTIFY, "a", "Song", "Artist", "Album", 200000, "ISRC1", "https://art/a")
+        val yt = Track("youtube:b", YOUTUBE, "b", "Song (Official Video)", "Artist", null, 201000, null, null)
+        val backup = Backup(
+            tracks = listOf(sp, yt),
+            links = listOf(TrackLink("youtube:b", "spotify:a", 0.9, TrackLink.REVIEWED), TrackLink("youtube:c", null, 0.0, TrackLink.MANUAL)),
+            mixes = listOf(
+                Mix(name = "Drive", createdAt = 1, updatedAt = 2) to listOf(MixItem(0, 0, "spotify:a", "spotify:pl"), MixItem(0, 1, "youtube:b", null)),
+                Mix(name = "Empty", createdAt = 3, updatedAt = 3) to emptyList(),
+            ),
+        )
+        // Through text, as it goes to the file and back.
+        assertEquals(backup, BackupJson.decode(JSONObject(BackupJson.encode(backup).toString())))
+    }
+
+    @Test fun backupDropsWhatItCannotUse() {
+        val json = JSONObject(
+            """{"version":1,"tracks":[{"id":"spotify:a","service":"spotify","remote_id":"a","title":"Song"}],
+               "links":[{"youtube_track_id":"youtube:b","spotify_track_id":"spotify:gone","score":1,"source":"manual"},
+                        {"youtube_track_id":"youtube:c","spotify_track_id":"spotify:a","score":0.9,"source":"auto"}],
+               "mixes":[{"name":"M","created_at":1,"updated_at":1,
+                         "items":[{"track_id":"spotify:gone","source":"x"},{"track_id":"spotify:a","source":"y"}]}]}"""
+        )
+        val b = BackupJson.decode(json)
+        assertEquals(emptyList<TrackLink>(), b.links)
+        assertEquals(listOf(MixItem(0, 0, "spotify:a", "y")), b.mixes.single().second)
+    }
+
+    @Test(expected = IllegalArgumentException::class) fun backupRejectsOtherJson() {
+        BackupJson.decode(JSONObject("""{"items":[]}"""))
+    }
 }

@@ -142,6 +142,8 @@ fun ConnectScreen(
     youtubeIn: Boolean,
     onSpotify: () -> Unit,
     onYouTube: () -> Unit,
+    onBackup: () -> Unit,
+    onRestore: () -> Unit,
 ) {
     val context = LocalContext.current
     // Re-read the two system permissions every time the user comes back from Settings.
@@ -165,6 +167,13 @@ fun ConnectScreen(
                 "Display over other apps", "Lets Mixtape open YouTube Music for the next track while the screen is off.",
                 null, overlay, if (overlay) "Granted" else "Grant",
             ) { context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))) }
+        }
+        item { SectionHeader("Mixes live only on this phone") }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onBackup) { Text("Back up mixes") }
+                OutlinedButton(onRestore) { Text("Restore") }
+            }
         }
     }
 }

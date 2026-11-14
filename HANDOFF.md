@@ -6,7 +6,7 @@ Personal-use Android app (one user, sideloaded, never published) that merges Spo
 
 ## Status
 
-All six milestones of the build plan are built and merged to `main` (PR #1). `./gradlew testDebugUnitTest lintDebug assembleDebug` is green (10 JVM tests, 0 lint errors). GitHub Actions runs the same on every push to `main` and on every PR, and uploads the debug APK as the `mixtape-debug-apk` artifact.
+All six milestones of the build plan are built and merged to `main` (PR #1). `./gradlew testDebugUnitTest lintDebug assembleDebug` is green (13 JVM tests, 0 lint errors). GitHub Actions runs the same on every push to `main` and on every PR, and uploads the debug APK as the `mixtape-debug-apk` artifact.
 
 **The user installed the APK and reported "the app works" (2026-11-13).** They gave no detail on which flows they exercised, so do not assume every item below was checked. Ask before relying on any one of them:
 
@@ -15,13 +15,22 @@ All six milestones of the build plan are built and merged to `main` (PR #1). `./
 - match review, and a linked YouTube track playing from Spotify
 - whether Spotify refused the tracks of any playlist (Development Mode limits)
 
-No work is in progress and nothing is queued. Start a new session by asking the user what they want next. Candidates, none of them requested yet:
+## Feature plan (agreed with the user 2026-11-13, one PR per step, in this order)
 
-- Tune the matching thresholds (0.85 / 0.6 in `Matcher.kt`) on the user's real library.
-- Replace the hand-written mapper fixtures with recorded API responses.
-- Run the matching backlog under WorkManager so it advances while the app is closed.
-- Export a mix to a Spotify playlist (needs the "nothing is written back in v1" ruling lifted, and write scopes).
-- Move to AGP 9.1 / compileSdk 37 to unpin AndroidX.
+1. **Mix backup/restore**: built, see below.
+2. Shuffle, repeat, sleep timer (in `Player`, order saved in the existing SharedPreferences queue entry).
+3. Unified search over both libraries (one `LIKE` query, results reuse the add-to-mix dialog).
+4. Matching backlog under WorkManager.
+5. Play history and stats. Steps 5 to 7 share **one** Room migration v2 to v3: a `play_event` table, `rules` on `mix`, `added_at` on `playlist_track`.
+6. Smart mixes (rules as JSON on the mix; "never played" needs step 5).
+7. Library cleanup screen (duplicates across services, YouTube tracks with no Spotify match).
+8. Mixtape's own media session. Reverses a decision below; build as a spike and drop it if headset buttons misbehave on the phone. The user has not yet confirmed this.
+9. Home-screen widget (plain `AppWidgetProvider`, reusing the service intents).
+10. Export a mix to Spotify / YouTube. Needs the "nothing is written back" ruling lifted by the user, and write scopes. Not yet confirmed.
+
+Backup (step 1): Accounts screen, "Back up mixes" / "Restore", through the system file picker. The file (`BackupJson` in `Mappers.kt`, version 1) holds mixes, their items, the tracks they use, and `manual`/`reviewed` links. `LibraryDao.restore` only adds: a mix with the same name and creation time is skipped, existing track rows and the user's own link decisions are kept. Not yet tried on the phone.
+
+Other candidates, not requested: tune the matching thresholds (0.85 / 0.6 in `Matcher.kt`) on the real library; replace the hand-written mapper fixtures with recorded API responses; move to AGP 9.1 / compileSdk 37 to unpin AndroidX.
 
 Workflow: branch from `main`, open a PR, and merge only when the user asks.
 
@@ -68,7 +77,7 @@ The Spotify client ID is in `gradle.properties`. Debug keystore SHA-1 (registere
 - A Spotify sign-in made before playback existed lacks the `app-remote-control` scope; Spotify asks for it on first playback.
 - Mapper fixtures are hand-written to the documented shapes, not recorded responses.
 - The playback rules above were written from documented behavior. The user reports the app works, but which edge cases (relinked Spotify tracks, autoplay taking over, the 15 s YouTube fallback) were hit on the phone is unknown.
-- Cloud sessions: the Android SDK needs `dl.google.com` (the personal `mixtape` cloud environment allows it); SDK at `/opt/android-sdk`, `local.properties` not committed.
+- Cloud sessions: the Android SDK needs `dl.google.com` (the personal `mixtape` cloud environment allows it); `local.properties` is not committed. If `/opt/android-sdk` is missing, install the command-line tools from dl.google.com, then `platforms;android-36`, `build-tools;36.0.0`, and write `sdk.dir`. Maven Central sometimes answers 429; re-run the build.
 
 ## Rulings that bind
 
