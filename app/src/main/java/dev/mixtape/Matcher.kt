@@ -118,6 +118,21 @@ object Matcher {
         }
     }
 
+    /**
+     * The IDs to put in a playlist on [service] for [tracks], in order and without repeats. A track from the other
+     * service is included only through a link ([links]: YouTube track ID to Spotify track ID); the rest are left out.
+     */
+    fun exportIds(tracks: List<Track>, links: Map<String, String>, service: String): List<String> {
+        val toYouTube = links.entries.associate { (yt, sp) -> sp to yt }
+        return tracks.mapNotNull { t ->
+            when {
+                t.service == service -> t.id
+                service == SPOTIFY -> links[t.id]
+                else -> toYouTube[t.id]
+            }
+        }.distinct()
+    }
+
     /** Round-robin: first of each group, then second of each, until all are used. */
     fun <T> interleave(groups: List<List<T>>): List<T> {
         val out = ArrayList<T>(groups.sumOf { it.size })

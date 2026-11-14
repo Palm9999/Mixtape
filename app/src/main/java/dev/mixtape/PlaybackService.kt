@@ -6,10 +6,17 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProvider
+import android.content.ComponentName
+import android.widget.RemoteViews
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
+import android.media.MediaMetadata
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.os.Build
 import android.os.IBinder
 import android.service.notification.NotificationListenerService
@@ -66,12 +73,30 @@ class PlaybackService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val player get() = (application as MixtapeApp).player
 
+    /**
+     * Mixtape's own media session, so the system's media controls show the mix (not just the one track the playing
+     * app knows about) and act on Mixtape's queue. Mixtape plays no audio itself, so headset and Bluetooth buttons
+     * still go to the app that does; the player already treats that app skipping ahead as "next".
+     */
+    private lateinit var session: MediaSession
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         getSystemService(NotificationManager::class.java)
             .createNotificationChannel(NotificationChannel(CHANNEL, "Playback", NotificationManager.IMPORTANCE_LOW))
+        session = MediaSession(this, "Mixtape").apply {
+            setCallback(object : MediaSession.Callback() {
+                override fun onPlay() { if (!player.state.value.run { playing || loading }) player.toggle() }
+                override fun onPause() { if (player.state.value.run { playing || loading }) player.toggle() }
+                override fun onSkipToNext() = player.next()
+                override fun onSkipToPrevious() = player.previous()
+                override fun onSeekTo(pos: Long) = player.seekTo(pos)
+                override fun onStop() = player.stop()
+            })
+            isActive = true
+        }
         val first = notification(player.state.value)
         if (Build.VERSION.SDK_INT >= 29) startForeground(ID, first, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
         else startForeground(ID, first)
@@ -84,8 +109,11 @@ class PlaybackService : Service() {
                 } else {
                     getSystemService(NotificationManager::class.java).notify(ID, notification(player.state.value))
                 }
+                MixtapeWidget.update(this@PlaybackService, player.state.value)
             }
         }
+        // Every state the player publishes carries a fresh position reading; the system extrapolates between them.
+        scope.launch { player.state.collect(::publish) }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -98,7 +126,34 @@ class PlaybackService : Service() {
         return START_NOT_STICKY
     }
 
+    private fun publish(s: PlayerState) {
+        val track = s.current
+        session.setMetadata(
+            MediaMetadata.Builder()
+                .putString(MediaMetadata.METADATA_KEY_TITLE, track?.title)
+                .putString(MediaMetadata.METADATA_KEY_ARTIST, track?.artist)
+                .putString(MediaMetadata.METADATA_KEY_ALBUM, track?.album)
+                .putLong(MediaMetadata.METADATA_KEY_DURATION, s.durationMs)
+                .build()
+        )
+        val state = when {
+            s.loading -> PlaybackState.STATE_BUFFERING
+            s.playing -> PlaybackState.STATE_PLAYING
+            else -> PlaybackState.STATE_PAUSED
+        }
+        session.setPlaybackState(
+            PlaybackState.Builder()
+                .setActions(
+                    PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_STOP or
+                        PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SEEK_TO
+                )
+                .setState(state, s.positionMs, if (s.playing) 1f else 0f, s.positionAt)
+                .build()
+        )
+    }
+
     override fun onDestroy() {
+        session.release()
         scope.cancel()
         super.onDestroy()
     }
@@ -124,16 +179,47 @@ class PlaybackService : Service() {
             )
             .addAction(action(android.R.drawable.ic_media_next, "Next", NEXT))
             .addAction(action(android.R.drawable.ic_menu_close_clear_cancel, "Stop", STOP))
-            .setStyle(Notification.MediaStyle().setShowActionsInCompactView(0, 1, 2))
+            .setStyle(Notification.MediaStyle().setMediaSession(session.sessionToken).setShowActionsInCompactView(0, 1, 2))
             .build()
     }
 
-    private companion object {
-        const val CHANNEL = "playback"
-        const val ID = 1
+    companion object {
+        private const val CHANNEL = "playback"
+        private const val ID = 1
         const val TOGGLE = "dev.mixtape.TOGGLE"
         const val NEXT = "dev.mixtape.NEXT"
         const val PREVIOUS = "dev.mixtape.PREVIOUS"
         const val STOP = "dev.mixtape.STOP"
+    }
+}
+
+/** Home-screen widget: the current track with previous, play/pause and next. Tapping the text opens Mixtape. */
+class MixtapeWidget : AppWidgetProvider() {
+    override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) =
+        update(context, (context.applicationContext as MixtapeApp).player.state.value)
+
+    companion object {
+        fun update(context: Context, s: PlayerState) {
+            // A widget tap may start a foreground service from the background; PlaybackService goes foreground in onCreate.
+            fun tap(action: String) = PendingIntent.getForegroundService(
+                context, action.hashCode(), Intent(context, PlaybackService::class.java).setAction(action), PendingIntent.FLAG_IMMUTABLE,
+            )
+            val views = RemoteViews(context.packageName, R.layout.widget).apply {
+                setTextViewText(R.id.widget_title, s.current?.title ?: "Mixtape")
+                setTextViewText(R.id.widget_artist, s.current?.artist ?: "Nothing queued")
+                setImageViewResource(
+                    R.id.widget_toggle,
+                    if (s.playing || s.loading) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
+                )
+                setOnClickPendingIntent(R.id.widget_previous, tap(PlaybackService.PREVIOUS))
+                setOnClickPendingIntent(R.id.widget_toggle, tap(PlaybackService.TOGGLE))
+                setOnClickPendingIntent(R.id.widget_next, tap(PlaybackService.NEXT))
+                setOnClickPendingIntent(
+                    R.id.widget_text,
+                    PendingIntent.getActivity(context, 0, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE),
+                )
+            }
+            AppWidgetManager.getInstance(context).updateAppWidget(ComponentName(context, MixtapeWidget::class.java), views)
+        }
     }
 }

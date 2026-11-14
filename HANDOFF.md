@@ -6,7 +6,7 @@ Personal-use Android app (one user, sideloaded, never published) that merges Spo
 
 ## Status
 
-All six milestones of the build plan are built and merged to `main` (PR #1). `./gradlew testDebugUnitTest lintDebug assembleDebug` is green (16 JVM tests, 0 lint errors). GitHub Actions runs the same on every push to `main` and on every PR, and uploads the debug APK as the `mixtape-debug-apk` artifact.
+All six milestones of the build plan are built and merged to `main` (PR #1). `./gradlew testDebugUnitTest lintDebug assembleDebug` is green (17 JVM tests, 0 lint errors). GitHub Actions runs the same on every push to `main` and on every PR, and uploads the debug APK as the `mixtape-debug-apk` artifact.
 
 **The user installed the APK and reported "the app works" (2026-11-13).** They gave no detail on which flows they exercised, so do not assume every item below was checked. Ask before relying on any one of them:
 
@@ -26,11 +26,11 @@ The user said on 2026-11-14: complete all steps, and merge each PR yourself once
 5. **Play history and stats**: built. `Player.logPlay` records a listen (played to the end, or 30 s before a skip). Stats screen from the Library menu.
 6. **Smart mixes**: built. `SmartRule` in `Matcher.kt` (pure, tested), stored as JSON in `mix.rules`, evaluated in `MixScreen` on open; no `mix_item` rows.
 7. **Library cleanup**: built. Read-only lists from the Library menu: twice in one playlist, kept on both services, YouTube only (opens `MatchPicker`).
-8. Mixtape's own media session. Reverses a decision below; build as a spike and drop it if headset buttons misbehave on the phone.
-9. Home-screen widget (plain `AppWidgetProvider`, reusing the service intents).
-10. Export a mix to Spotify / YouTube. Needs write scopes and a re-sign-in on both services; the user lifted the "nothing is written back" ruling for this step.
+8. **Media session**: built, in `PlaybackService`. Reverses an earlier decision. Mixtape plays no audio, so headset and Bluetooth buttons still go to the playing app; the session drives the system media controls only. If the phone shows a confusing second media card, remove `session` and the `setMediaSession` call.
+9. **Widget**: built. `MixtapeWidget` in `PlaybackService.kt`, `res/layout/widget.xml`. Updated by the service; no per-widget configuration.
+10. **Export**: built. Mix menu, "Export to Spotify" / "Export to YouTube Music": a new private playlist. `Sync.exportSpotify` / `exportYouTube`, `Matcher.exportIds` (tested). Spotify needs the new `playlist-modify-private` scope, so sign out and in once. YouTube asks for the write scope `youtube` only at export time; sync stays on `youtube.readonly`. YouTube costs 50 quota units per track, about 199 tracks a day. The Spotify write endpoints (`POST /me/playlists`, `POST /playlists/{id}/items`, falling back to `/tracks` on 404) are written from memory of the February 2026 API and are unverified.
 
-Steps 1 to 7 have not been tried on the phone. In particular the v2 to v3 migration has only been checked against the exported schema and by running its SQL on a v2-shaped SQLite file, not on a device.
+All ten steps are built. None has been tried on the phone. In particular the v2 to v3 migration has only been checked against the exported schema and by running its SQL on a v2-shaped SQLite file, not on a device.
 
 Backup (step 1): Accounts screen, "Back up mixes" / "Restore", through the system file picker. The file (`BackupJson` in `Mappers.kt`, version 1) holds mixes, their items, the tracks they use, and `manual`/`reviewed` links. `LibraryDao.restore` only adds: a mix with the same name and creation time is skipped, existing track rows and the user's own link decisions are kept. 
 
@@ -70,7 +70,6 @@ The Spotify client ID is in `gradle.properties`. Debug keystore SHA-1 (registere
 - Sync keeps going when Spotify answers 403/404 for one playlist's items: the playlist is listed empty and its name is reported.
 - Icons are a dozen inline path strings (`Glyphs`), not the Material icons artifact.
 - AGP 8.13.2, Gradle 8.14.3, compileSdk 36. Newer AndroidX needs AGP 9.1 and compileSdk 37, so versions are pinned one step back.
-- Not built, on purpose: export of a mix to a Spotify playlist (the ruling below forbids writing back in v1), and Mixtape's own media session for lock-screen controls (the playing app shows its own).
 
 ## Gotchas
 
@@ -87,5 +86,5 @@ The Spotify client ID is in `gradle.properties`. Debug keystore SHA-1 (registere
 
 - Personal use only: no store listing, no extended quota, no backend, no client secrets in the APK.
 - Spotify plays through App Remote; YouTube plays in the YouTube Music app via its media session. No embedded YouTube player.
-- Mixes are local only; nothing is written back to either service in v1.
+- Mixes are local only. The one exception, allowed by the user on 2026-11-14: exporting a mix creates a new private playlist. Nothing else is written, and existing playlists are never changed.
 - Keep it to one module and the fewest files that work.

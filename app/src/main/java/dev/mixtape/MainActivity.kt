@@ -181,6 +181,46 @@ private fun Mixtape(app: MixtapeApp) {
             }.onFailure(::report)
         }
     }
+    val youtubeWriteLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
+        runCatching { app.youtube.finishSignIn(r.data) }.onSuccess { say("Permission granted. Export the mix again.") }.onFailure(::report)
+    }
+
+    /** Writes a mix to one service as a new private playlist. The only place Mixtape changes anything outside the phone. */
+    fun export(service: String, name: String, tracks: List<Track>) {
+        val ids = Matcher.exportIds(tracks, links.filter { it.playable }.associate { it.youtubeTrackId to it.spotifyTrackId!! }, service)
+        val left = tracks.size - ids.size
+        if (ids.isEmpty()) return say("None of these tracks is on ${if (service == SPOTIFY) "Spotify" else "YouTube Music"}")
+        scope.launch {
+            say("Exporting ${ids.size} track(s)…")
+            runCatching {
+                if (service == SPOTIFY) {
+                    try {
+                        app.sync.exportSpotify(name, ids, app.spotify.token())
+                    } catch (e: HttpError) {
+                        if (e.code == 401 || e.code == 403) throw IOException("Spotify refused. Sign out of Spotify and in again on the Accounts screen, so Mixtape may create playlists.")
+                        throw e
+                    }
+                    ids.size
+                } else {
+                    val auth = app.youtube.authorize(write = true)
+                    val pending = auth.pendingIntent
+                    if (auth.hasResolution() && pending != null) {
+                        youtubeWriteLauncher.launch(IntentSenderRequest.Builder(pending.intentSender).build())
+                        return@launch
+                    }
+                    app.sync.exportYouTube(name, ids, auth.accessToken ?: throw IOException("YouTube needs you to sign in again"))
+                }
+            }.onSuccess { done ->
+                say(
+                    "Exported $done track(s) to a new private playlist \"$name\"" +
+                        (if (done < ids.size) "; YouTube's daily quota stopped the other ${ids.size - done}" else "") +
+                        (if (left > 0) "; $left had no match there" else "")
+                )
+                refresh()
+            }.onFailure(::report)
+        }
+    }
+
     val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     LaunchedEffect(Unit) { refresh() }
@@ -263,7 +303,7 @@ private fun Mixtape(app: MixtapeApp) {
                 modifier, app, route.removePrefix("playlist/"), links,
                 onAdd = { tracks, source -> adding = Adding(tracks, source) }, report = ::report,
             )
-            route.startsWith("mix/") -> MixScreen(modifier, app, route.removePrefix("mix/").toLong(), links, onDeleted = ::back)
+            route.startsWith("mix/") -> MixScreen(modifier, app, route.removePrefix("mix/").toLong(), links, onExport = ::export, onDeleted = ::back)
             else -> LibraryScreen(
                 modifier, dao, mixes, refreshing, ::refresh,
                 onOpen = ::go, onNewMix = { adding = null; naming = true }, onNewSmart = { smart = true },
