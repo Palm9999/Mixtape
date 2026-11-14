@@ -57,8 +57,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.IOException
+import java.time.LocalDate
 
 class MainActivity : ComponentActivity() {
     private val app get() = application as MixtapeApp
@@ -145,6 +150,34 @@ private fun Mixtape(app: MixtapeApp) {
     val youtubeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
         runCatching { app.youtube.finishSignIn(r.data) }.onSuccess { authVersion++; refresh() }.onFailure(::report)
     }
+    // Backup and restore go through the system file picker, so no storage permission is needed.
+    val backupSaver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) scope.launch {
+            runCatching {
+                val backup = dao.backup()
+                withContext(Dispatchers.IO) {
+                    // "wt" truncates, so overwriting a longer old backup leaves no tail behind.
+                    (app.contentResolver.openOutputStream(uri, "wt") ?: throw IOException("Could not open the file"))
+                        .use { it.write(BackupJson.encode(backup).toString(2).toByteArray()) }
+                }
+                backup.mixes.size
+            }.onSuccess { say("Backed up $it mix(es)") }.onFailure(::report)
+        }
+    }
+    val backupOpener = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            runCatching {
+                val text = withContext(Dispatchers.IO) {
+                    (app.contentResolver.openInputStream(uri) ?: throw IOException("Could not open the file")).use { it.readBytes().decodeToString() }
+                }
+                val backup = runCatching { BackupJson.decode(JSONObject(text)) }.getOrElse { throw IOException("Not a Mixtape backup file") }
+                backup.mixes.size to dao.restore(backup)
+            }.onSuccess { (inFile, added) ->
+                say("Restored $added mix(es)" + if (added < inFile) ", ${inFile - added} already here" else "")
+                app.matchInBackground()
+            }.onFailure(::report)
+        }
+    }
     val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     LaunchedEffect(Unit) { refresh() }
@@ -204,6 +237,8 @@ private fun Mixtape(app: MixtapeApp) {
                         }.onFailure(::report)
                     }
                 },
+                onBackup = { backupSaver.launch("mixtape-backup-${LocalDate.now()}.json") },
+                onRestore = { backupOpener.launch(arrayOf("application/json", "text/*", "application/octet-stream")) },
             )
             route == "review" -> ReviewScreen(modifier, app, ::report)
             route == "now" -> NowPlayingScreen(modifier, ps, player)

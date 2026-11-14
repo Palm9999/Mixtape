@@ -82,3 +82,50 @@ object YouTubeJson {
             id to runCatching { Duration.parse(iso).toMillis() }.getOrDefault(0)
         }.toMap()
 }
+
+/** Everything that exists only on the phone: mixes, the tracks they use, and the match decisions the user made. */
+data class Backup(val tracks: List<Track>, val links: List<TrackLink>, val mixes: List<Pair<Mix, List<MixItem>>>)
+
+object BackupJson {
+    private const val VERSION = 1
+
+    fun encode(b: Backup): JSONObject = JSONObject()
+        .put("version", VERSION)
+        .put("tracks", JSONArray(b.tracks.map { t ->
+            JSONObject().put("id", t.id).put("service", t.service).put("remote_id", t.remoteId).put("title", t.title)
+                .put("artist", t.artist).put("album", t.album).put("duration_ms", t.durationMs).put("isrc", t.isrc).put("art_url", t.artUrl)
+        }))
+        .put("links", JSONArray(b.links.map { l ->
+            JSONObject().put("youtube_track_id", l.youtubeTrackId).put("spotify_track_id", l.spotifyTrackId)
+                .put("score", l.score).put("source", l.source)
+        }))
+        .put("mixes", JSONArray(b.mixes.map { (m, items) ->
+            JSONObject().put("name", m.name).put("created_at", m.createdAt).put("updated_at", m.updatedAt)
+                .put("items", JSONArray(items.map { JSONObject().put("track_id", it.trackId).put("source", it.source) }))
+        }))
+
+    /** Throws on a file that is not a Mixtape backup. Items whose track is not in the file are dropped. */
+    fun decode(json: JSONObject): Backup {
+        require(json.optInt("version") == VERSION && json.has("mixes")) { "Not a Mixtape backup file" }
+        val tracks = json.optJSONArray("tracks").objects().mapNotNull { t ->
+            val id = t.str("id") ?: return@mapNotNull null
+            val service = t.str("service")?.takeIf { it == SPOTIFY || it == YOUTUBE } ?: return@mapNotNull null
+            Track(id, service, t.str("remote_id") ?: return@mapNotNull null, t.str("title") ?: "", t.str("artist") ?: "",
+                t.str("album"), t.optLong("duration_ms"), t.str("isrc"), t.str("art_url"))
+        }
+        val known = tracks.mapTo(HashSet()) { it.id }
+        val links = json.optJSONArray("links").objects().mapNotNull { l ->
+            val source = l.str("source")?.takeIf { it == TrackLink.MANUAL || it == TrackLink.REVIEWED } ?: return@mapNotNull null
+            val spotify = l.str("spotify_track_id")
+            if (spotify != null && spotify !in known) return@mapNotNull null
+            TrackLink(l.str("youtube_track_id") ?: return@mapNotNull null, spotify, l.optDouble("score", 0.0), source)
+        }
+        val mixes = json.optJSONArray("mixes").objects().mapNotNull { m ->
+            val name = m.str("name") ?: return@mapNotNull null
+            val items = m.optJSONArray("items").objects().filter { it.str("track_id") in known }
+                .mapIndexed { i, it -> MixItem(0, i, it.getString("track_id"), it.str("source")) }
+            Mix(name = name, createdAt = m.optLong("created_at"), updatedAt = m.optLong("updated_at")) to items
+        }
+        return Backup(tracks, links, mixes)
+    }
+}

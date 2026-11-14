@@ -7,6 +7,7 @@ import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
@@ -207,6 +208,48 @@ interface LibraryDao {
         clearMix(mixId)
         insertMixItems(items.mapIndexed { i, it -> it.copy(mixId = mixId, position = i) })
         touchMix(mixId)
+    }
+
+    // --- backup ---
+    @Query("SELECT * FROM mix ORDER BY id")
+    suspend fun allMixes(): List<Mix>
+
+    /** Tracks a backup must carry: those in mixes, and the Spotify side of the user's own match decisions. */
+    @Query(
+        "SELECT * FROM track WHERE id IN (SELECT track_id FROM mix_item) OR id IN " +
+            "(SELECT spotify_track_id FROM track_link WHERE source IN ('manual', 'reviewed') AND spotify_track_id IS NOT NULL)"
+    )
+    suspend fun backupTracks(): List<Track>
+
+    @Query("SELECT * FROM track_link WHERE source IN ('manual', 'reviewed')")
+    suspend fun decidedLinks(): List<TrackLink>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertMissingTracks(t: List<Track>)
+
+    @Query("SELECT COUNT(*) FROM mix WHERE name = :name AND created_at = :createdAt")
+    suspend fun mixCount(name: String, createdAt: Long): Int
+
+    suspend fun backup() = Backup(backupTracks(), decidedLinks(), allMixes().map { it to mixItems(it.id) })
+
+    /**
+     * Adds what the backup holds without replacing anything: synced track rows, the user's own match decisions
+     * and mixes already on the phone (same name and creation time) are kept. Returns the number of mixes added.
+     */
+    @Transaction
+    suspend fun restore(b: Backup): Int {
+        insertMissingTracks(b.tracks)
+        for (l in b.links) {
+            val mine = link(l.youtubeTrackId)?.source
+            if (mine != TrackLink.MANUAL && mine != TrackLink.REVIEWED) upsertLink(l)
+        }
+        var added = 0
+        for ((mix, items) in b.mixes) {
+            if (mixCount(mix.name, mix.createdAt) > 0) continue
+            val id = insertMix(mix.copy(id = 0))
+            insertMixItems(items.mapIndexed { i, it -> it.copy(mixId = id, position = i) })
+            added++
+        }
+        return added
     }
 
     @Transaction
