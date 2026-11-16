@@ -6,7 +6,7 @@ Personal-use Android app (one user, sideloaded, never published) that merges Spo
 
 ## Status
 
-All six milestones of the build plan are built and merged to `main` (PR #1). `./gradlew testDebugUnitTest lintDebug assembleDebug` is green (17 JVM tests, 0 lint errors). GitHub Actions runs the same on every push to `main` and on every PR, and uploads the debug APK as the `mixtape-debug-apk` artifact.
+All six milestones of the build plan are built and merged to `main` (PR #1). `./gradlew testDebugUnitTest lintDebug assembleDebug` is green (18 JVM tests, 0 lint errors). GitHub Actions runs the same on every push to `main` and on every PR, and uploads the debug APK as the `mixtape-debug-apk` artifact.
 
 **The user installed the APK and reported "the app works" (2026-11-13).** They gave no detail on which flows they exercised, so do not assume every item below was checked. Ask before relying on any one of them:
 
@@ -30,7 +30,13 @@ The user said on 2026-11-14: complete all steps, and merge each PR yourself once
 9. **Widget**: built. `MixtapeWidget` in `PlaybackService.kt`, `res/layout/widget.xml`. Updated by the service; no per-widget configuration.
 10. **Export**: built. Mix menu, "Export to Spotify" / "Export to YouTube Music": a new private playlist. `Sync.exportSpotify` / `exportYouTube`, `Matcher.exportIds` (tested). Spotify needs the new `playlist-modify-private` scope, so sign out and in once. YouTube asks for the write scope `youtube` only at export time; sync stays on `youtube.readonly`. YouTube costs 50 quota units per track, about 199 tracks a day. The Spotify write endpoints (`POST /me/playlists`, `POST /playlists/{id}/items`, falling back to `/tracks` on 404) are written from memory of the February 2026 API and are unverified.
 
-All ten steps are built. None has been tried on the phone. In particular the v2 to v3 migration has only been checked against the exported schema and by running its SQL on a v2-shaped SQLite file, not on a device.
+All ten steps are built. None has been tried on the phone.
+
+Added 2026-11-16 at the user's request, also untried on the phone:
+
+- **Play next / add to queue**: `Player.playNext` / `enqueue`, offered by `TrackMenu` (playlist rows and search results).
+- **Queue editing**: drag and remove on Now Playing. `queueMove` / `queueRemove` in `Player.kt` are the pure rules (tested). List positions there are queue positions plus 2.
+- **Catalog search**: Library search adds "More on Spotify" (10 results, the Development Mode cap; 600 ms after typing stops). Results are upserted into `track` so they can be queued, logged or put in a mix; the next sync clears unused ones. Spotify only: a YouTube search costs 100 quota units. In particular the v2 to v3 migration has only been checked against the exported schema and by running its SQL on a v2-shaped SQLite file, not on a device.
 
 Backup (step 1): Accounts screen, "Back up mixes" / "Restore", through the system file picker. The file (`BackupJson` in `Mappers.kt`, version 1) holds mixes, their items, the tracks they use, and `manual`/`reviewed` links. `LibraryDao.restore` only adds: a mix with the same name and creation time is skipped, existing track rows and the user's own link decisions are kept. 
 

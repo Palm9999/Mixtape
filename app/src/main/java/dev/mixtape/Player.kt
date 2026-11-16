@@ -71,6 +71,22 @@ fun nextIndex(index: Int, size: Int, repeat: Repeat, natural: Boolean): Int? = w
     else -> 0
 }
 
+/** [queue] with the item at [from] moved to [to], and where the current item (at [index]) ends up. */
+fun <T> queueMove(queue: List<T>, index: Int, from: Int, to: Int): Pair<List<T>, Int> {
+    val moved = queue.toMutableList().apply { add(to, removeAt(from)) }
+    val now = when {
+        from == index -> to
+        from < index && to >= index -> index - 1
+        from > index && to <= index -> index + 1
+        else -> index
+    }
+    return moved to now
+}
+
+/** [queue] without the item at [at]. The index follows the current item; if that is the one removed, it lands on the next. */
+fun <T> queueRemove(queue: List<T>, index: Int, at: Int): Pair<List<T>, Int> =
+    (queue.take(at) + queue.drop(at + 1)) to if (at < index) index - 1 else index
+
 /**
  * The queue engine: Mixtape owns the queue and plays one item at a time in whichever app holds it, pausing the other.
  * Spotify is driven through App Remote; YouTube Music is opened by link and followed through its media session.
@@ -131,6 +147,49 @@ class Player(private val context: Context, private val dao: LibraryDao) {
     }
 
     fun next() = advance(natural = false)
+
+    /** Puts [tracks] right after the current track. With nothing queued, plays them. */
+    fun playNext(tracks: List<Track>) = add(tracks, next = true)
+
+    /** Puts [tracks] at the end of the queue. With nothing queued, plays them. */
+    fun enqueue(tracks: List<Track>) = add(tracks, next = false)
+
+    private fun add(tracks: List<Track>, next: Boolean) {
+        if (tracks.isEmpty()) return
+        if (_state.value.queue.isEmpty()) return play(tracks)
+        _state.update {
+            val at = if (next) it.index + 1 else it.queue.size
+            it.copy(queue = it.queue.take(at) + tracks + it.queue.drop(at))
+        }
+        save()
+    }
+
+    /** Reorders the queue; the current track keeps playing wherever it lands. */
+    fun move(from: Int, to: Int) {
+        val s = _state.value
+        if (from !in s.queue.indices || to !in s.queue.indices) return
+        val (queue, index) = queueMove(s.queue, s.index, from, to)
+        _state.update { it.copy(queue = queue, index = index) }
+        save()
+    }
+
+    /** Takes one item out of the queue. Removing the current track moves on to the next, or stops at the end. */
+    fun removeAt(at: Int) {
+        val s = _state.value
+        if (at !in s.queue.indices) return
+        val current = at == s.index
+        if (current && started() && s.positionNow() > 30_000) logPlay()
+        val (queue, index) = queueRemove(s.queue, s.index, at)
+        _state.update { it.copy(queue = queue, index = index.coerceAtMost(queue.size - 1)) }
+        save()
+        if (!current) return
+        if (index in queue.indices && (s.playing || s.loading)) return start(index)
+        // Paused, or that was the last track: the next press of play starts whatever is current from its beginning.
+        stop()
+        spotifyStarted = false
+        ytStarted = false
+        _state.update { it.copy(positionMs = 0, durationMs = it.current?.durationMs ?: 0) }
+    }
 
     fun cycleRepeat() {
         _state.update { it.copy(repeat = Repeat.entries[(it.repeat.ordinal + 1) % Repeat.entries.size]) }
