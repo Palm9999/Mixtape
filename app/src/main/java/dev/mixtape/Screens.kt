@@ -214,6 +214,7 @@ fun LibraryScreen(
     player: Player,
     links: List<TrackLink>,
     onAdd: (List<Track>, String?) -> Unit,
+    searchCatalog: suspend (String) -> List<Track>,
 ) {
     val all by dao.playlists().collectAsState(initial = emptyList())
     val sizes by dao.mixSizes().collectAsState(initial = emptyList())
@@ -227,6 +228,15 @@ fun LibraryScreen(
     }
     val hits = if (filter == null) found else found.filter { it.service == filter }
     val linkOf = remember(links) { links.associateBy { it.youtubeTrackId } }
+    // Spotify's whole catalog, asked once typing has paused; a new keystroke cancels the wait.
+    val catalog by produceState(emptyList<Track>(), query) {
+        value = emptyList()
+        if (searching) {
+            delay(600)
+            value = runCatching { searchCatalog(query.trim()) }.getOrDefault(emptyList())
+        }
+    }
+    val more = if (filter == YOUTUBE) emptyList() else catalog.filter { c -> hits.none { it.id == c.id } }
     Column(modifier) {
         OutlinedTextField(
             query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -239,11 +249,13 @@ fun LibraryScreen(
             FilterChip(filter == YOUTUBE, { filter = YOUTUBE }, { Text("YouTube") })
         }
         if (searching) LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
-            item(key = "count") { SectionHeader(if (hits.isEmpty()) "No tracks found" else "${hits.size} track(s)") }
+            item(key = "count") { SectionHeader("In your library · ${hits.size}") }
             itemsIndexed(hits, key = { _, t -> t.id }) { i, t ->
-                TrackRow(t, linkOf[t.id], Modifier.clickable { player.play(hits, i) }) {
-                    IconButton({ onAdd(listOf(t), null) }) { Icon(Glyphs.Add, "Add to a mix") }
-                }
+                TrackRow(t, linkOf[t.id], Modifier.clickable { player.play(hits, i) }) { TrackMenu(player, t, onAdd) }
+            }
+            if (more.isNotEmpty()) item(key = "more") { SectionHeader("More on Spotify") }
+            itemsIndexed(more, key = { _, t -> "more/${t.id}" }) { i, t ->
+                TrackRow(t, null, Modifier.clickable { player.play(more, i) }) { TrackMenu(player, t, onAdd) }
             }
         } else PullToRefreshBox(refreshing, onRefresh, Modifier.fillMaxSize()) {
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
@@ -323,6 +335,21 @@ private fun TrackRow(
     )
 }
 
+/** A track's ⋮ menu: play next, add to queue, add to mix, and whatever [extra] the screen adds. */
+@Composable
+private fun TrackMenu(player: Player, track: Track, onAdd: (List<Track>, String?) -> Unit, extra: @Composable (close: () -> Unit) -> Unit = {}) {
+    var menu by remember { mutableStateOf(false) }
+    Box {
+        IconButton({ menu = true }) { Icon(Glyphs.More, "More") }
+        DropdownMenu(menu, { menu = false }) {
+            DropdownMenuItem({ Text("Play next") }, { menu = false; player.playNext(listOf(track)) })
+            DropdownMenuItem({ Text("Add to queue") }, { menu = false; player.enqueue(listOf(track)) })
+            DropdownMenuItem({ Text("Add to mix") }, { menu = false; onAdd(listOf(track), null) })
+            extra { menu = false }
+        }
+    }
+}
+
 @Composable
 private fun PlayButtons(enabled: Boolean, onPlay: () -> Unit, onShuffle: () -> Unit, extra: @Composable () -> Unit = {}) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -355,13 +382,8 @@ fun PlaylistScreen(
             if (tracks.isEmpty()) item { Text("No tracks here yet. Pull to refresh on the Library screen.", Modifier.padding(16.dp)) }
             itemsIndexed(tracks) { i, t ->
                 TrackRow(t, linkById[t.id], Modifier.clickable { app.player.play(tracks, i) }) {
-                    var menu by remember { mutableStateOf(false) }
-                    Box {
-                        IconButton({ menu = true }) { Icon(Glyphs.More, "More") }
-                        DropdownMenu(menu, { menu = false }) {
-                            DropdownMenuItem({ Text("Add to mix") }, { menu = false; onAdd(listOf(t), null) })
-                            if (t.service == YOUTUBE) DropdownMenuItem({ Text("Choose Spotify match…") }, { menu = false; rematch = t })
-                        }
+                    TrackMenu(app.player, t, onAdd) { close ->
+                        if (t.service == YOUTUBE) DropdownMenuItem({ Text("Choose Spotify match…") }, { close(); rematch = t })
                     }
                 }
             }
@@ -608,7 +630,10 @@ fun NowPlayingScreen(modifier: Modifier, ps: PlayerState, player: Player) {
     val position by rememberPosition(ps)
     // While the thumb is dragged, show the finger's position, not the player's.
     var scrub by remember { mutableStateOf<Float?>(null) }
-    LazyColumn(modifier) {
+    // The queue starts after the player and the header, so list positions are queue positions plus 2.
+    val listState = rememberLazyListState()
+    val reorder = rememberReorderableLazyListState(listState) { from, to -> player.move(from.index - 2, to.index - 2) }
+    LazyColumn(modifier, state = listState) {
         item {
             Column(Modifier.padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 AsyncImage(
@@ -679,8 +704,16 @@ fun NowPlayingScreen(modifier: Modifier, ps: PlayerState, player: Player) {
             }
         }
         item { SectionHeader("Queue · ${ps.index + 1} of ${ps.queue.size}") }
-        itemsIndexed(ps.queue) { i, t ->
-            TrackRow(t, null, Modifier.clickable { player.jumpTo(i) }, highlighted = i == ps.index)
+        // A track can be queued twice, so a key is its ID plus which copy it is.
+        val seen = HashMap<String, Int>()
+        val keys = ps.queue.map { t -> "${t.id}#${seen.merge(t.id, 1, Int::plus)}" }
+        itemsIndexed(ps.queue, key = { i, _ -> keys[i] }) { i, t ->
+            ReorderableItem(reorder, key = keys[i]) {
+                TrackRow(t, null, Modifier.clickable { player.jumpTo(i) }, highlighted = i == ps.index) {
+                    IconButton({ player.removeAt(i) }) { Icon(Glyphs.Close, "Remove from queue") }
+                    IconButton({}, Modifier.draggableHandle()) { Icon(Glyphs.Drag, "Drag to reorder") }
+                }
+            }
         }
     }
 }

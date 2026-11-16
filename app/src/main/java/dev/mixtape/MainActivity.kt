@@ -308,6 +308,11 @@ private fun Mixtape(app: MixtapeApp) {
                 modifier, dao, mixes, refreshing, ::refresh,
                 onOpen = ::go, onNewMix = { adding = null; naming = true }, onNewSmart = { smart = true },
                 player = player, links = links, onAdd = { tracks, source -> adding = Adding(tracks, source) },
+                searchCatalog = { q ->
+                    if (!app.spotify.signedIn) emptyList()
+                    // Saved so a result can go into a mix or the play history; unused rows are cleared by the next sync.
+                    else app.sync.searchSpotify(q, "", app.spotify.token()).also { dao.upsertTracks(it) }
+                },
             )
         }
     }

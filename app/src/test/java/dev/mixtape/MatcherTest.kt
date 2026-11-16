@@ -106,4 +106,17 @@ class MatcherTest {
         // s1 goes in as its YouTube copy; s2 has none and is left out.
         assertEquals(listOf("youtube:y1", "youtube:y2"), Matcher.exportIds(tracks, links, YOUTUBE))
     }
+
+    @Test fun queueEditsKeepTheCurrentTrack() {
+        val q = listOf("a", "b", "c", "d")
+        // Current is c (index 2) throughout.
+        assertEquals(listOf("b", "c", "a", "d") to 1, queueMove(q, 2, 0, 2))
+        assertEquals(listOf("a", "d", "b", "c") to 3, queueMove(q, 2, 3, 1))
+        assertEquals(listOf("c", "a", "b", "d") to 0, queueMove(q, 2, 2, 0))
+        assertEquals(listOf("b", "a", "c", "d") to 2, queueMove(q, 2, 0, 1))
+        assertEquals(listOf("b", "c", "d") to 1, queueRemove(q, 2, 0))
+        assertEquals(listOf("a", "b", "c") to 2, queueRemove(q, 2, 3))
+        // Removing the current track leaves the index on the one after it.
+        assertEquals(listOf("a", "b", "d") to 2, queueRemove(q, 2, 2))
+    }
 }
